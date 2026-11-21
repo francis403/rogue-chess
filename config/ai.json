@@ -1,0 +1,17 @@
+{
+  "win_score": 100000,
+  "score_weight": 10,
+  "material_weight": 1,
+  "shield_bonus": 2,
+  "advance_weight": 0.1,
+  "energy_weight": 0.05,
+  "burn_pending_factor": 0.5,
+  "tie_epsilon": 0.001,
+  "follow_up_win_factor": 0.5,
+  "threat_horizon_moves": 2,
+  "king_threat_penalty": 300,
+  "king_exposure_weight": 2,
+  "piece_threat_factor": 0.5,
+  "threat_targets": ["queen", "rook"],
+  "move_delay_seconds": 0.45
+}

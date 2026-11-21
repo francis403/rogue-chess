@@ -1,0 +1,8 @@
+{
+  "pawn":   { "value": 1, "symbol": "P" },
+  "knight": { "value": 3, "symbol": "N" },
+  "bishop": { "value": 3, "symbol": "B" },
+  "rook":   { "value": 5, "symbol": "R" },
+  "queen":  { "value": 8, "symbol": "Q" },
+  "king":   { "value": 0, "symbol": "K" }
+}

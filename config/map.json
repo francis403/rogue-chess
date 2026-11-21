@@ -1,0 +1,30 @@
+{
+  "floors": 7,
+  "start_nodes": ["L1", "M1", "R1"],
+  "nodes": {
+    "L1": { "floor": 1, "lane": 0, "type": "match", "opponent": "easy", "next": ["L2", "M2"] },
+    "M1": { "floor": 1, "lane": 1, "type": "match", "opponent": "easy", "next": ["L2", "M2", "R2"] },
+    "R1": { "floor": 1, "lane": 2, "type": "match", "opponent": "easy", "next": ["M2", "R2"] },
+
+    "L2": { "floor": 2, "lane": 0, "type": "shop", "next": ["L3"] },
+    "M2": { "floor": 2, "lane": 1, "type": "match", "opponent": "easy", "next": ["M3", "R3"] },
+    "R2": { "floor": 2, "lane": 2, "type": "match", "opponent": "easy", "next": ["M3", "R3"] },
+
+    "L3": { "floor": 3, "lane": 0, "type": "match", "opponent": "medium", "next": ["L4"] },
+    "M3": { "floor": 3, "lane": 1, "type": "shop", "next": ["M4"] },
+    "R3": { "floor": 3, "lane": 2, "type": "coaching", "next": ["R4"] },
+
+    "L4": { "floor": 4, "lane": 0, "type": "match", "opponent": "medium", "next": ["L5", "M5"] },
+    "M4": { "floor": 4, "lane": 1, "type": "match", "opponent": "medium", "next": ["L5", "M5"] },
+    "R4": { "floor": 4, "lane": 2, "type": "match", "opponent": "medium", "next": ["R5"] },
+
+    "L5": { "floor": 5, "lane": 0, "type": "coaching", "next": ["L6", "R6"] },
+    "M5": { "floor": 5, "lane": 1, "type": "coaching", "next": ["L6", "R6"] },
+    "R5": { "floor": 5, "lane": 2, "type": "shop", "next": ["L6", "R6"] },
+
+    "L6": { "floor": 6, "lane": 0, "type": "match", "opponent": "medium", "next": ["BOSS"] },
+    "R6": { "floor": 6, "lane": 2, "type": "match", "opponent": "medium", "next": ["BOSS"] },
+
+    "BOSS": { "floor": 7, "lane": 1, "type": "boss", "opponent": "boss", "next": [] }
+  }
+}

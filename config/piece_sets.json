@@ -1,0 +1,15 @@
+{
+  "default_unlocked": ["standard"],
+  "boss_unlock": "fire",
+  "sets": {
+    "standard": { "name": "Standard", "desc": "Classic chess pieces.", "value_modifier": 0 },
+    "fire": {
+      "name": "Fire",
+      "desc": "Pieces are worth 1 less. Once moved a piece burns for 3 turns, then is lost (counts as captured). Captures by burning-hot pieces give +2 points.",
+      "value_modifier": -1,
+      "burn_turns": 3,
+      "capture_bonus": 2,
+      "king_is_fire": false
+    }
+  }
+}

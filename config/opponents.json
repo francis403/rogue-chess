@@ -1,0 +1,52 @@
+{
+  "easy": {
+    "name": "Rookie Rex",
+    "difficulty": "Easy",
+    "search_depth": 1,
+    "random_chance": 0.30,
+    "artifact_count": 0,
+    "pieces": [
+      { "type": "king",   "square": [2, 5] },
+      { "type": "bishop", "square": [3, 5] },
+      { "type": "knight", "square": [1, 5] },
+      { "type": "pawn",   "square": [1, 4] },
+      { "type": "pawn",   "square": [2, 4] },
+      { "type": "pawn",   "square": [3, 4] },
+      { "type": "pawn",   "square": [4, 4] }
+    ],
+    "deck": ["pawn", "knight", "bishop", "move"]
+  },
+  "medium": {
+    "name": "Coach Morgan",
+    "difficulty": "Medium",
+    "search_depth": 2,
+    "random_chance": 0.15,
+    "artifact_count": 0,
+    "pieces": [
+      { "type": "king",   "square": [2, 5] },
+      { "type": "rook",   "square": [0, 5] },
+      { "type": "knight", "square": [4, 5] },
+      { "type": "pawn",   "square": [1, 4] },
+      { "type": "pawn",   "square": [2, 4] },
+      { "type": "pawn",   "square": [3, 4] },
+      { "type": "pawn",   "square": [4, 4] }
+    ],
+    "deck": ["pawn", "knight", "rook", "move"]
+  },
+  "boss": {
+    "name": "Grandmaster Vex",
+    "difficulty": "Boss",
+    "search_depth": 2,
+    "random_chance": 0.05,
+    "artifact_count": 2,
+    "pieces": [
+      { "type": "king",  "square": [2, 5] },
+      { "type": "queen", "square": [3, 5] },
+      { "type": "pawn",  "square": [1, 4] },
+      { "type": "pawn",  "square": [2, 4] },
+      { "type": "pawn",  "square": [3, 4] },
+      { "type": "pawn",  "square": [4, 4] }
+    ],
+    "deck": ["pawn", "queen", "move"]
+  }
+}

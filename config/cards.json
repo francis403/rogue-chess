@@ -1,0 +1,8 @@
+{
+  "pawn":   { "cost": 1, "rarity": "normal", "name": "Pawn" },
+  "knight": { "cost": 1, "rarity": "normal", "name": "Knight" },
+  "bishop": { "cost": 1, "rarity": "normal", "name": "Bishop" },
+  "rook":   { "cost": 2, "rarity": "rare",   "name": "Rook" },
+  "queen":  { "cost": 3, "rarity": "rare",   "name": "Queen" },
+  "move":   { "cost": 1, "rarity": "normal", "name": "Move" }
+}

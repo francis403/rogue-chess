@@ -1,0 +1,11 @@
+{
+  "board_size": 6,
+  "deploy_rows": 2,
+  "target_score": 10,
+  "deploy_budget": 12,
+  "hand_size": 5,
+  "energy_per_turn": 3,
+  "redraw_cost": 1,
+  "max_rounds": 40,
+  "player_moves_first": true
+}

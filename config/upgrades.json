@@ -1,0 +1,12 @@
+{
+  "card": {
+    "cheaper": { "price": 2, "amount": 1, "name": "Cheaper", "desc": "Energy cost -1" },
+    "hold":    { "price": 2, "name": "Hold", "desc": "Stays in hand if unplayed" },
+    "book":    { "price": 2, "name": "Book", "desc": "Starts in your opening hand" }
+  },
+  "piece": {
+    "range":  { "price": 2, "amount": 1, "name": "Range +1", "desc": "Moves 1 square further (no effect on rook/bishop/queen)" },
+    "deploy": { "price": 2, "amount": 1, "name": "Deploy -1", "desc": "Costs 1 less to pick; capture value unchanged" },
+    "shield": { "price": 4, "name": "Shield", "desc": "Blocks the first capture attempt, then is gone for good" }
+  }
+}
