@@ -279,16 +279,44 @@ func game() -> ChessMatch:
 	return screen().game
 
 
-## True once the match screen waits for the player (or the match is over and the overlay is up).
+## True once the match screen waits for the player: their turn, their check-escape
+## prompt, or the match-over overlay.
 func match_idle() -> bool:
 	if main.current_screen_name != "MATCH" or not is_instance_valid(main.current_screen):
 		return false
 	var match_screen: Control = main.current_screen
 	if match_screen.game == null or match_screen.is_busy():
 		return false
-	if match_screen.game.is_over():
+	var match_game: ChessMatch = match_screen.game
+	if match_game.is_over():
 		return match_over_button() != null
-	return match_screen.game.current_side() == ChessMatch.PLAYER
+	if match_game.pending_escape_side() != -1:
+		return match_game.pending_escape_side() == ChessMatch.PLAYER
+	return match_game.current_side() == ChessMatch.PLAYER
+
+
+## Waits for the player's own turn (or the match end), pressing Stay on every escape prompt.
+func wait_player_turn() -> bool:
+	for i in 20:
+		if not await wait_match_idle():
+			return false
+		if not escape_prompt_up():
+			return true
+		press(button("Stay", screen()))
+	return false
+
+
+func escape_prompt_up() -> bool:
+	return match_idle() and not game().is_over() and game().pending_escape_side() == ChessMatch.PLAYER
+
+
+## Answers the player's escape prompt the way `brain` decides: click the escape square or press Stay.
+func answer_escape(brain: MatchAI) -> void:
+	var action := brain.choose_action(game())
+	if action.get("kind", "") == "escape":
+		click_square(action["to"])
+	else:
+		press(button("Stay", screen()))
 
 
 func wait_match_idle() -> bool:
@@ -316,13 +344,18 @@ func ui_play(play: Dictionary, card_first: bool = true) -> void:
 ## Plays the player's whole turn with a MatchAI brain, clicking every action through the UI.
 ## Alternates card-first and piece-first and checks each click played the expected card.
 ## Returns false if the screen stops responding.
+## Check-escape prompts met on the way (during either turn) are answered by the brain too.
 func play_turn_with_brain(brain: MatchAI) -> bool:
-	var turn := game().current_round()
 	var actions := 0
-	while match_idle() and not game().is_over() and game().current_round() == turn and actions < 30:
+	while match_idle() and not game().is_over() and actions < 40:
+		actions += 1
+		if escape_prompt_up():
+			answer_escape(brain)
+			if not await wait_match_idle():
+				return false
+			continue
 		check_idle_invariants()
 		var action := brain.choose_action(game())
-		actions += 1
 		match action["kind"]:
 			"play":
 				var card_first := actions % 2 == 1
@@ -338,6 +371,7 @@ func play_turn_with_brain(brain: MatchAI) -> bool:
 				press(button("Redraw", screen()))
 			_:
 				press(button("End turn", screen()))
+				return await wait_match_idle()
 		if not await wait_match_idle():
 			return false
 	return true
@@ -345,7 +379,7 @@ func play_turn_with_brain(brain: MatchAI) -> bool:
 
 ## Records a failure when the card the click flow should have played is still in hand.
 func _check_played(card: CardData, energy_before: int, card_first: bool) -> void:
-	if game().is_over() or game().current_side() != ChessMatch.PLAYER:
+	if game().is_over() or game().current_side() != ChessMatch.PLAYER or game().pending_escape_side() != -1:
 		return
 	var flow := "card-first" if card_first else "piece-first"
 	for in_hand: CardData in game().hand(ChessMatch.PLAYER):

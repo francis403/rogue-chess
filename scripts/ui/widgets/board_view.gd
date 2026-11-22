@@ -22,6 +22,8 @@ var captures: Array[Vector2i] = []
 var last_move: Array[Vector2i] = []
 var selected: Vector2i = NO_SQUARE
 var drop_squares: Array[Vector2i] = []
+## Pieces giving check: drawn with an oxblood corner frame.
+var threats: Array[Vector2i] = []
 
 var _tokens: Dictionary = {}
 var _token_squares: Dictionary = {}
@@ -219,9 +221,19 @@ func _draw_square(square: Vector2i) -> void:
 	if targets.has(square):
 		draw_circle(rect.get_center(), rect.size.x * 0.15, Color(Palette.WALNUT_DEEP, 0.45))
 		draw_circle(rect.get_center(), rect.size.x * 0.11, Color(Palette.BRASS, 0.9))
+	if threats.has(square):
+		_draw_corners(rect.grow(-3), Palette.OXBLOOD)
 	if captures.has(square):
 		draw_rect(rect, Color(Palette.OXBLOOD, 0.35))
 		draw_rect(rect.grow(-2), Palette.OXBLOOD, false, 4.0)
+
+
+func _draw_corners(rect: Rect2, color: Color) -> void:
+	var arm := rect.size.x * 0.28
+	for corner: Vector2 in [rect.position, Vector2(rect.end.x, rect.position.y), rect.end, Vector2(rect.position.x, rect.end.y)]:
+		var inward := (rect.get_center() - corner).sign()
+		draw_line(corner, corner + Vector2(inward.x * arm, 0), color, 4.0)
+		draw_line(corner, corner + Vector2(0, inward.y * arm), color, 4.0)
 
 
 func _draw_hole(rect: Rect2) -> void:

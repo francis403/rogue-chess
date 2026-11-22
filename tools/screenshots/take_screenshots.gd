@@ -9,10 +9,30 @@ const TEMP_DIR := "user://screenshot_tmp/"
 const MAIN_SCENE := "res://scenes/main.tscn"
 
 var _main: Control
+## Renders the game at exactly 1280x720 whatever size the OS gives the window.
+var _viewport: SubViewport
+
+
+## Opponent stand-in for the escape-prompt shot: one scripted rook move, then end turn.
+class ScriptedAI extends MatchAI:
+	var rook_move: Array = []
+
+	func choose_action(game: ChessMatch) -> Dictionary:
+		if game.pending_escape_side() == side:
+			return {"kind": "decline_escape"}
+		var hand := game.hand(side)
+		for i in hand.size():
+			if hand[i].type == "rook" and not rook_move.is_empty():
+				var move: Array = rook_move
+				rook_move = []
+				return {"kind": "play", "card_index": i, "from": move[0], "to": move[1]}
+		return {"kind": "end_turn"}
+
 var _count: int = 0
 
 
 func _ready() -> void:
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 	DisplayServer.window_set_size(Vector2i(1280, 720))
 	# macOS stops drawing an occluded window, which would freeze every later screenshot.
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, true)
@@ -21,8 +41,12 @@ func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(TEMP_DIR)
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
 	Game.use_storage(TEMP_DIR + "meta.json", TEMP_DIR + "logs/")
+	_viewport = SubViewport.new()
+	_viewport.size = Vector2i(1280, 720)
+	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	add_child(_viewport)
 	_main = load(MAIN_SCENE).instantiate()
-	add_child(_main)
+	_viewport.add_child(_main)
 	await _first_run()
 	await _second_run()
 	await _third_run()
@@ -128,6 +152,7 @@ func _third_run() -> void:
 	await _wait_idle()
 	await _shot("match_artifacts_holes")
 	await _shield_and_explosion_scene()
+	await _check_scenes()
 
 
 # --- Crafted match moments ------------------------------------------------------
@@ -169,6 +194,26 @@ func _shield_and_explosion_scene() -> void:
 	await _press_play("knight", Vector2i(4, 2), Vector2i(5, 4), 0.1)
 	await _shot("match_explosion")
 	await _wait_idle()
+
+
+## The opponent answers the player's check, then the player's own escape prompt.
+func _check_scenes() -> void:
+	_show_crafted(_crafted([["king", 0, 0], ["rook", 3, 1], ["pawn", 1, 1]], [["king", 2, 5], ["pawn", 4, 4], ["knight", 4, 5]],
+		["rook", "move", "pawn", "move", "move"], ["move", "move", "move", "move", "move"]))
+	await _wait_idle()
+	await _press_play("rook", Vector2i(3, 1), Vector2i(2, 1), 0.0)
+	await _settle(float(GameConfig.value("ai", "move_delay_seconds")) + 0.45)
+	await _shot("match_opponent_escapes")
+	await _wait_idle()
+	_show_crafted(_crafted([["king", 2, 0], ["pawn", 5, 1], ["pawn", 0, 1], ["knight", 1, 0]], [["king", 5, 5], ["rook", 3, 5], ["pawn", 4, 4]],
+		["move", "move", "pawn", "knight", "move"], ["rook", "rook", "rook", "rook", "rook"]))
+	await _wait_idle()
+	var scripted := ScriptedAI.new(ChessMatch.OPPONENT, 1, 0.0, RandomNumberGenerator.new())
+	scripted.rook_move = [Vector2i(3, 5), Vector2i(2, 5)]
+	_screen()._ai = scripted
+	_screen()._on_end_turn()
+	await _wait_idle()
+	await _shot("match_escape_prompt")
 
 
 ## A setup in ChessMatch format. Pieces: [type, x, y, upgrade?]; cards: "type:upgrade".
@@ -298,7 +343,7 @@ func _shot(screen_name: String) -> void:
 		RenderingServer.force_draw(false)
 	_count += 1
 	var path := ProjectSettings.globalize_path(OUT_DIR + "%02d_%s.png" % [_count, screen_name])
-	var image := get_viewport().get_texture().get_image()
+	var image := _viewport.get_texture().get_image()
 	image.save_png(path)
 	print("screenshot: ", path)
 

@@ -16,6 +16,7 @@ const SHOP_REMOVE_CHANCE := 0.4
 const COACHING_ACCEPT_CHANCE := 0.7
 const COACHING_DECLINE_CHANCE := 0.5
 const PLAYER_SKIP_CHANCE := 0.02
+const RANDOM_ESCAPE_CHANCE := 0.15
 ## Player bot strength cycles per run, so some runs beat the boss and some lose early.
 const PLAYER_PROFILES: Array[Dictionary] = [
 	{"depth": 2, "random_chance": 0.0},
@@ -32,6 +33,7 @@ var failures: Array[String] = []
 var stats := {
 	"runs": 0, "runs_won": 0, "boss_reached": 0, "fire_runs": 0, "artifact_runs": 0,
 	"matches": 0, "match_rounds": 0, "match_actions": 0, "matches_by_opponent": {}, "match_reasons": {},
+	"checks": 0, "checks_without_escape": 0, "escapes": 0, "escapes_declined": 0,
 	"run_msec": 0, "decisions_by_depth": {}, "decision_usec_by_depth": {}, "max_decision_usec_by_depth": {},
 	"crashes": 0, "action_errors": 0, "illegal_states": 0, "softlocks": 0, "log_errors": 0,
 }
@@ -219,21 +221,25 @@ func _play_match(setup: Dictionary, profile: Dictionary) -> Dictionary:
 	var actions := 0
 	var broken := state_error(game, deck_sizes, credited)
 	while broken == "" and not game.is_over() and actions < MAX_MATCH_ACTIONS:
-		var side := game.current_side()
+		var escaping := game.pending_escape_side() != -1
+		var side := game.pending_escape_side() if escaping else game.current_side()
 		var action := _timed_choice(ais[side], game)
 		var contract_error := action_error(game, action)
 		if contract_error != "":
 			_fail("illegal_states", "AI side %d: %s" % [side, contract_error])
 			return {}
-		if side == ChessMatch.PLAYER and action["kind"] == "play" and _rng.randf() < PLAYER_SKIP_CHANCE:
+		if escaping and _rng.randf() < RANDOM_ESCAPE_CHANCE:
+			action = _random_escape_answer(game)
+		elif side == ChessMatch.PLAYER and action["kind"] == "play" and _rng.randf() < PLAYER_SKIP_CHANCE:
 			action = {"kind": "end_turn"}
 		var events := MatchAI.apply_action(game, action)
 		if events.is_empty() or events[0]["type"] == "error":
 			_fail("action_errors", "%s rejected: %s" % [action, events])
 			return {}
 		actions += 1
-		_add_score_events(events, credited)
-		broken = state_error(game, deck_sizes, credited)
+		broken = _scan_events(game, events, credited)
+		if broken == "":
+			broken = state_error(game, deck_sizes, credited)
 	if broken != "":
 		_fail("illegal_states", broken)
 		return {}
@@ -246,6 +252,35 @@ func _play_match(setup: Dictionary, profile: Dictionary) -> Dictionary:
 		return {}
 	stats["match_actions"] += actions
 	return result
+
+
+func _random_escape_answer(game: ChessMatch) -> Dictionary:
+	var squares := game.escape_squares()
+	var pick := _rng.randi_range(0, squares.size())
+	return {"kind": "decline_escape"} if pick == squares.size() else {"kind": "escape", "to": squares[pick]}
+
+
+## Credits "score" events, counts checks/escapes and checks the turn-start energy
+## (D59: energy = max(max_energy - escape_penalty, 0)). Returns a broken invariant or "".
+func _scan_events(game: ChessMatch, events: Array[Dictionary], credited: Array[int]) -> String:
+	for event in events:
+		match event["type"]:
+			"score":
+				credited[int(event["side"])] += int(event["points"])
+			"check":
+				stats["checks"] += 1
+				if not event["can_escape"]:
+					stats["checks_without_escape"] += 1
+			"escape":
+				stats["escapes"] += 1
+			"escape_declined":
+				stats["escapes_declined"] += 1
+			"energy":
+				var penalty := int(event["escape_penalty"])
+				var expected := maxi(game.max_energy(int(event["side"])) - penalty, 0)
+				if penalty < 0 or int(event["energy"]) != expected:
+					return "turn-start energy %d with escape penalty %d, expected %d" % [event["energy"], penalty, expected]
+	return ""
 
 
 func _timed_choice(ai: MatchAI, game: ChessMatch) -> Dictionary:
@@ -396,6 +431,8 @@ func summary_lines() -> Array[String]:
 		"matches: %d, avg rounds %.1f, avg actions %.1f" % [stats["matches"], float(stats["match_rounds"]) / matches, float(stats["match_actions"]) / matches],
 	]
 	lines.append("match end reasons: %s" % stats["match_reasons"])
+	lines.append("checks: %d (no escape possible %d), escapes %d, declined %d" % [
+		stats["checks"], stats["checks_without_escape"], stats["escapes"], stats["escapes_declined"]])
 	for opponent_id in stats["matches_by_opponent"]:
 		var counts: Dictionary = stats["matches_by_opponent"][opponent_id]
 		lines.append("  vs %s: %d played, player won %d (%.0f%%), avg rounds %.1f, player endings %s" % [
@@ -410,9 +447,15 @@ func summary_lines() -> Array[String]:
 
 
 ## Empty if the AI's action is legal right now (D9 contract), else the reason.
+## While an escape is pending only escape (to a safe square) or decline_escape is legal.
 static func action_error(game: ChessMatch, action: Dictionary) -> String:
+	var kind: String = action.get("kind", "")
+	if game.pending_escape_side() != -1:
+		if kind == "escape":
+			return "" if game.escape_squares().has(action["to"]) else "escape to a square that is not offered: %s" % action
+		return "" if kind == "decline_escape" else "%s while an escape is pending" % kind
 	var plays := game.legal_plays(game.current_side())
-	match action.get("kind", ""):
+	match kind:
 		"play":
 			var play := {"card_index": action["card_index"], "from": action["from"], "to": action["to"]}
 			return "" if plays.has(play) else "play not in legal_plays: %s" % action
@@ -421,13 +464,6 @@ static func action_error(game: ChessMatch, action: Dictionary) -> String:
 		"end_turn":
 			return "end_turn with a playable card" if not plays.is_empty() else ""
 	return "unknown action %s" % action
-
-
-## Sums the points of every "score" event into `credited` (per side).
-static func _add_score_events(events: Array[Dictionary], credited: Array[int]) -> void:
-	for event in events:
-		if event["type"] == "score":
-			credited[int(event["side"])] += int(event["points"])
 
 
 ## Empty if the match state is sane, else the broken invariant (as in test_match_integrity,
@@ -452,6 +488,8 @@ static func state_error(game: ChessMatch, deck_sizes: Array[int], credited: Arra
 				return "piece square out of sync at %s" % piece.square
 		if kings > 1 or (kings == 0 and not game.is_over()):
 			return "side %d has %d kings" % [side, kings]
+		if game.escape_penalty(side) < 0:
+			return "side %d has a negative escape penalty" % side
 		if game.score(side) != credited[side]:
 			return "side %d score %d but score events credit %d" % [side, game.score(side), credited[side]]
 		if game.score(side) < 0 or game.energy(side) < 0 or game.energy(side) > game.max_energy(side):
@@ -462,6 +500,41 @@ static func state_error(game: ChessMatch, deck_sizes: Array[int], credited: Arra
 			return "side %d hand too big" % side
 	if game.current_round() > game.max_rounds():
 		return "past the turn limit"
+	return escape_error(game)
+
+
+## Independent check of a pending escape (D57, D62): the match is running, there is
+## at least one square, and each square really is safe on a clone — unless that escape
+## wins, or its capture set off the escaping side's Powder Keg (D62 ignores blasts,
+## which can open a line by removing a blocker).
+static func escape_error(game: ChessMatch) -> String:
+	var defender := game.pending_escape_side()
+	if defender == -1:
+		return ""
+	if game.is_over():
+		return "escape pending after the match ended"
+	var squares := game.escape_squares()
+	if squares.is_empty():
+		return "escape pending with no escape square"
+	for to in squares:
+		var after := game.clone()
+		var events := after.escape(to)
+		if events[0]["type"] == "error":
+			return "offered escape square %s rejected: %s" % [to, events[0]["reason"]]
+		if after.is_over() and int(after.result()["winner"]) == defender:
+			continue
+		if events.any(func(event: Dictionary) -> bool: return event["type"] == "explosion"):
+			continue
+		var king: MatchPiece = null
+		for piece in after.pieces(defender):
+			if piece.type == "king":
+				king = piece
+		if king == null:
+			return "escape to %s lost the king" % to
+		for attacker in after.pieces(1 - defender):
+			if after.piece_moves(attacker.square).has(king.square):
+				return "escape square %s is attacked by the piece on %s (escape events %s)" % [
+					to, attacker.square, events.map(func(event: Dictionary) -> String: return event["type"])]
 	return ""
 
 

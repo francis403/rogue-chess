@@ -25,7 +25,7 @@ Rule of thumb: the simplest choice that keeps the game fun, with the number in `
 - D15. Anti-softlock turn limit: `match.json: max_rounds` = 40 rounds (one round = player turn + opponent turn). When it runs out, the higher score wins; a tie goes to the opponent (the player must force the issue).
 
 ## Piece movement
-- D16. Standard chess moves otherwise; pawns move 1 forward (no double step), capture 1 diagonally forward, promote to queen on the far rank. No castling, no en passant, no check.
+- D16. Standard chess moves otherwise; pawns move 1 forward (no double step), capture 1 diagonally forward, promote to queen on the far rank. No castling, no en passant, no checkmate (but see the check escape, D56).
 - D17. Range +1: king moves up to 2 squares in any straight/diagonal line (path must be clear); pawn may move up to 2 forward (path clear, no capture forward), captures stay 1 diagonal; knight additionally gets the (±3,±1)/(±1,±3) leaps. Rook, bishop and queen: no effect (allowed, as the spec says).
 - D18. Holes: no piece may stop on a hole; sliding pieces, pawns and kings are blocked by them; knights jump over them (they can't land on one either).
 
@@ -45,7 +45,7 @@ Rule of thumb: the simplest choice that keeps the game fun, with the number in `
 - D27. "Captured pieces worth +1 (only for the owner)": every piece credited to the owner as a capture (normal, explosion or burn-out) gives the owner +1. The opponent gets no bonus for capturing the owner's pieces.
 - D28. Holes: if either side has the artifact, 2–4 holes (uniform) are placed on empty squares of ranks 2–3 at match start.
 - D29. Exploding: when the **owner** captures a piece, the 8 squares around the captured piece's square explode; every piece there (both sides, never the attacker who now stands on the centre square) is captured, no chain reactions. Each exploded piece scores for its owner's opponent. A shielded piece in the blast loses its shield instead.
-- D30. Boss gets `artifact_count` = 2 distinct random artifacts from the full pool; Easy and Medium get none. (Tuned from 1 → 2 after the 100-run sim showed the boss easier than Medium: player beat it 80% vs Medium 53%; with 2 it is ~38%.)
+- D30. Boss gets `artifact_count` = 3 distinct random artifacts from the full pool; Easy and Medium get none. Tuned with the 100-run sim so the boss stays the hardest fight: 1 artifact made it easier than Medium (80% player wins); 2 fixed that until the check escape (D56) made it ~62% again, the same as Medium; with 3 it is ~46% vs Medium ~65%.
 
 ## Economy and run
 - D31. Starting points 0. Win = +2; reward = pick 1 of 3 random distinct card types (no upgrade) or skip for +1.
@@ -77,3 +77,12 @@ Rule of thumb: the simplest choice that keeps the game fun, with the number in `
 - D53. The shop can't remove your last Move card: the king can only move with it, so removing it could leave a side unable to act (found in review).
 - D54. Bad roster squares passed straight to ChessMatch (bypassing RunSession validation) are a programming error and assert; RunSession always validates first.
 - D55. AI king safety (extends D41): besides the single-reply search, the evaluation penalises positions where an enemy piece can capture the AI's king (or queen/rook, scaled) within 2 raw moves on a static board, adds a small king-exposure term, and at depth 2 treats "a card still in hand can take the king / reach the target score" as a sure win (no reply happens mid-turn). Weights in `ai.json`. Result: depth-2 vs depth-2 matches with default rosters last ~6–8 rounds (was ~3).
+
+## Check escape (added after the MVP, from the Miro rule clarification)
+- D56. **Check**: after a card play, if any piece of the side that moved could capture the enemy king with its normal movement, the enemy king is in check. Checks are only looked for after card plays (not after burn-outs or turn starts). A shield on the king does not prevent check.
+- D57. **Escape**: the checked side may immediately move its king once, out of turn, using the king's normal movement (Range +1 included). It needs no card. The destination must not be attacked by the enemy (capturing the checking piece is allowed if that square is safe). If no safe square exists, there is no escape. The move resolves like any move (captures, points, explosions, win checks). Then the checking side continues its turn.
+- D58. **Optional**: the escape can be declined (the player gets a prompt; the AI decides). Declining leaves the king in check.
+- D59. **Cost**: `match.json: check_escape_cost` = 1 energy, taken off the escaping side's **next** turn (3 becomes 2). "Must have at least 1 energy remaining" = the escaping side's next-turn budget after earlier escape costs this round must still cover the cost, so with 3 energy a side can escape at most 3 times per enemy turn and its next turn can drop to 0.
+- D60. Several checks in one turn each offer an escape, each costing 1, while the budget allows.
+- D61. A square holding a shielded enemy piece is never an escape square (the shield would block the capture and the king would not move).
+- D62. "Safe" escape square = no enemy piece could capture the king there with normal movement, checked on a board copy after the move. Powder Keg blasts are not considered.

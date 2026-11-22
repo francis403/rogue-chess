@@ -139,11 +139,14 @@ func test_explosion_eats_shields_instead_of_pieces() -> void:
 	assert_false(game.piece_at(Vector2i(3, 3)).shield_active)
 	assert_eq(game.score(P), 1)
 	game.play(0, Vector2i(2, 3), Vector2i(2, 4))
+	game.decline_escape()
 	game.end_turn()
 	game.end_turn()
 	game.play(0, Vector2i(2, 4), Vector2i(5, 4))
+	game.decline_escape()
 	assert_false(game.is_over())
 	game.play(0, Vector2i(5, 4), Vector2i(5, 5))
+	game.decline_escape()
 	assert_eq(game.result()["shields_consumed"], [shielded.uid])
 
 

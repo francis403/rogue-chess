@@ -96,7 +96,7 @@ func test_losing_by_skipping_every_turn_ends_the_run_with_an_artifact_unlock() -
 		var end_turn := ui.button("End turn", ui.screen())
 		assert_true(ui.press(end_turn))
 		ui.force_press(end_turn)  # double press: ignored while the turn is handed over
-		assert_true(await ui.wait_match_idle(), "opponent turn finished")
+		assert_true(await ui.wait_player_turn(), "opponent turn finished")
 		if not ui.game().is_over():
 			assert_eq(ui.game().current_round(), round_before + 1, "one press = one skipped turn")
 		turns += 1

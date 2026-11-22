@@ -21,6 +21,9 @@ var _shields_consumed: Array[int] = []
 var _captured: Array[Dictionary] = []
 var _player_pieces_used: Array[int] = []
 var _player_pieces_moved: Array[int] = []
+var _pending_escape_side: int = -1
+var _escape_squares: Array[Vector2i] = []
+var _escape_penalty: Array[int] = [0, 0]
 
 
 ## An empty setup builds a blank match; only clone() uses that.
@@ -121,6 +124,28 @@ func is_hole(square: Vector2i) -> bool:
 	return _board.is_hole(square)
 
 
+## Side that may answer a check right now (D57), -1 if none. While it is set,
+## only escape() / decline_escape() are accepted.
+func pending_escape_side() -> int:
+	return _pending_escape_side
+
+
+## Safe king destinations for the pending escape ([] if none pending).
+func escape_squares() -> Array[Vector2i]:
+	return _escape_squares.duplicate()
+
+
+## Energy that will be taken off `side`'s next turn for escapes made so far (D59).
+func escape_penalty(side: int) -> int:
+	return _escape_penalty[side]
+
+
+## True if an enemy piece could capture `side`'s king with its normal movement.
+func in_check(side: int) -> bool:
+	var king := _find_king(_board, side)
+	return king != null and not _checkers(_board, king).is_empty()
+
+
 func is_over() -> bool:
 	return _is_over
 
@@ -149,7 +174,7 @@ func has_any_piece_move(side: int) -> bool:
 ## Empty when it is not that side's turn or the match is over.
 func legal_plays(side: int) -> Array[Dictionary]:
 	var plays: Array[Dictionary] = []
-	if _is_over or side != _current:
+	if _is_over or side != _current or _pending_escape_side != -1:
 		return plays
 	var hand_cards := _sides[side].hand
 	var affordable: Array[int] = []
@@ -183,7 +208,7 @@ func pieces_for_card(card_index: int) -> Array[Vector2i]:
 
 ## Destinations for playing this card on the piece at `from` (empty if not allowed).
 func targets(card_index: int, from: Vector2i) -> Array[Vector2i]:
-	if _is_over or card_index < 0 or card_index >= _sides[_current].hand.size():
+	if _is_over or _pending_escape_side != -1 or card_index < 0 or card_index >= _sides[_current].hand.size():
 		return []
 	var piece := _board.piece_at(from)
 	if piece == null or piece.side != _current:
@@ -196,7 +221,7 @@ func targets(card_index: int, from: Vector2i) -> Array[Vector2i]:
 ## D8: only when no card in hand is playable and redraw is affordable.
 ## Redraw discards the whole hand, Hold cards included, so dead Hold cards can't lock it.
 func can_redraw() -> bool:
-	if _is_over or _sides[_current].energy < int(_config("redraw_cost")):
+	if _is_over or _pending_escape_side != -1 or _sides[_current].energy < int(_config("redraw_cost")):
 		return false
 	return legal_plays(_current).is_empty()
 
@@ -214,30 +239,43 @@ func play(card_index: int, from: Vector2i, to: Vector2i) -> Array[Dictionary]:
 		"type": "card_played", "side": _current, "card_index": card_index, "card_uid": card.uid,
 		"card_type": card.type, "cost": card.cost(), "energy": side_state.energy,
 	}]
-	var mover := _board.piece_at(from)
-	var target := _board.piece_at(to)
-	if target != null and target.shield_active:
-		_consume_shield(target, "capture", mover, events)
-		return events
-	if target != null:
-		_board.remove(to)
-	_board.move(from, to)
-	_mark_moved(mover)
-	events.append({
-		"type": "move", "side": _current, "uid": mover.uid, "piece_type": mover.type,
-		"from": from, "to": to, "is_capture": target != null,
-	})
-	if target != null:
-		_credit_capture(target, _current, mover.capture_bonus(), "capture", events)
-		if side_state.has_artifact("exploding"):
-			_explode(to, events)
-	_ignite_if_needed(mover, events)
-	_promote_if_needed(mover, events)
-	_check_winner(_current, events)
+	_resolve_move(from, to, events)
+	if not _is_over:
+		_offer_escape_if_check(events)
 	return events
 
 
+## D57: the checked king moves to one of escape_squares(), out of turn and
+## without a card. Its cost comes off the escaping side's next turn (D59).
+func escape(to: Vector2i) -> Array[Dictionary]:
+	if _is_over or _pending_escape_side == -1:
+		return [_error_event("no_escape_pending")]
+	if not _escape_squares.has(to):
+		return [_error_event("illegal_move")]
+	var side := _pending_escape_side
+	var king := _find_king(_board, side)
+	_clear_pending_escape()
+	_escape_penalty[side] += int(_config("check_escape_cost"))
+	var events: Array[Dictionary] = [{
+		"type": "escape", "side": side, "uid": king.uid, "from": king.square, "to": to,
+		"cost": int(_config("check_escape_cost")), "penalty": _escape_penalty[side],
+	}]
+	_resolve_move(king.square, to, events)
+	return events
+
+
+## D58: leave the king in check; the checking side continues its turn.
+func decline_escape() -> Array[Dictionary]:
+	if _is_over or _pending_escape_side == -1:
+		return [_error_event("no_escape_pending")]
+	var side := _pending_escape_side
+	_clear_pending_escape()
+	return [{"type": "escape_declined", "side": side}]
+
+
 func redraw() -> Array[Dictionary]:
+	if _pending_escape_side != -1:
+		return [_error_event("escape_pending")]
 	if not can_redraw():
 		return [_error_event("redraw_not_allowed")]
 	var side_state := _sides[_current]
@@ -253,6 +291,8 @@ func redraw() -> Array[Dictionary]:
 func end_turn() -> Array[Dictionary]:
 	if _is_over:
 		return [_error_event("match_over")]
+	if _pending_escape_side != -1:
+		return [_error_event("escape_pending")]
 	var events: Array[Dictionary] = []
 	var side := _current
 	_tick_burns(side, events)
@@ -289,6 +329,9 @@ func clone() -> ChessMatch:
 	copy._captured = _captured.duplicate(true)
 	copy._player_pieces_used = _player_pieces_used.duplicate()
 	copy._player_pieces_moved = _player_pieces_moved.duplicate()
+	copy._pending_escape_side = _pending_escape_side
+	copy._escape_squares = _escape_squares.duplicate()
+	copy._escape_penalty = _escape_penalty.duplicate()
 	return copy
 
 
@@ -327,10 +370,12 @@ func _place_random_holes() -> void:
 
 func _start_turn() -> Array[Dictionary]:
 	var side_state := _sides[_current]
-	side_state.energy = max_energy(_current)
+	var penalty := _escape_penalty[_current]
+	_escape_penalty[_current] = 0
+	side_state.energy = maxi(max_energy(_current) - penalty, 0)
 	var events: Array[Dictionary] = [
-		{"type": "turn_start", "side": _current, "round": _round},
-		{"type": "energy", "side": _current, "energy": side_state.energy},
+		{"type": "turn_start", "side": _current, "round": _round, "escape_penalty": penalty},
+		{"type": "energy", "side": _current, "energy": side_state.energy, "escape_penalty": penalty},
 	]
 	events.append_array(side_state.draw_up_to(int(_config("hand_size")), _rng))
 	if not has_any_piece_move(_current):
@@ -358,9 +403,97 @@ func _end_by_turn_limit(events: Array[Dictionary]) -> void:
 	_end_match(winner, "turn_limit", events)
 
 
+## Moves the piece on `from` (a card play or an escape) and resolves shield,
+## capture, explosion, ignite, promotion and the win check for its side.
+func _resolve_move(from: Vector2i, to: Vector2i, events: Array[Dictionary]) -> void:
+	var mover := _board.piece_at(from)
+	var side := mover.side
+	var target := _board.piece_at(to)
+	if target != null and target.shield_active:
+		_consume_shield(target, "capture", mover, events)
+		return
+	if target != null:
+		_board.remove(to)
+	_board.move(from, to)
+	_mark_moved(mover)
+	events.append({
+		"type": "move", "side": side, "uid": mover.uid, "piece_type": mover.type,
+		"from": from, "to": to, "is_capture": target != null,
+	})
+	if target != null:
+		_credit_capture(target, side, mover.capture_bonus(), "capture", events)
+		if _sides[side].has_artifact("exploding"):
+			_explode(to, side, events)
+	_ignite_if_needed(mover, events)
+	_promote_if_needed(mover, events)
+	_check_winner(side, events)
+
+
+## D56-D60: after a card play, a checked enemy king may escape if it has a
+## safe square and its next-turn budget still covers the cost.
+func _offer_escape_if_check(events: Array[Dictionary]) -> void:
+	var defender := 1 - _current
+	var king := _find_king(_board, defender)
+	if king == null:
+		return
+	var checkers := _checkers(_board, king)
+	if checkers.is_empty():
+		return
+	var budget := max_energy(defender) - _escape_penalty[defender]
+	var squares: Array[Vector2i] = []
+	if budget >= int(_config("check_escape_cost")):
+		squares = _safe_king_squares(king)
+	events.append({
+		"type": "check", "side": defender, "king_square": king.square, "checkers": checkers,
+		"escape_squares": squares, "can_escape": not squares.is_empty(),
+		"cost": int(_config("check_escape_cost")), "budget": budget,
+	})
+	if not squares.is_empty():
+		_pending_escape_side = defender
+		_escape_squares = squares
+
+
+## King destinations that actually move the king (no shielded piece there)
+## and where no enemy piece could capture it afterwards.
+func _safe_king_squares(king: MatchPiece) -> Array[Vector2i]:
+	var squares: Array[Vector2i] = []
+	for to in MoveGenerator.moves(_board, king):
+		var target := _board.piece_at(to)
+		if target != null and target.shield_active:
+			continue
+		var board := _board.copy()
+		board.remove(to)
+		board.move(king.square, to)
+		if _checkers(board, board.piece_at(to)).is_empty():
+			squares.append(to)
+	return squares
+
+
+func _checkers(board: MatchBoard, king: MatchPiece) -> Array[Vector2i]:
+	var squares: Array[Vector2i] = []
+	for piece in board.pieces(1 - king.side):
+		if MoveGenerator.moves(board, piece).has(king.square):
+			squares.append(piece.square)
+	return squares
+
+
+func _find_king(board: MatchBoard, side: int) -> MatchPiece:
+	for piece in board.pieces(side):
+		if piece.type == "king":
+			return piece
+	return null
+
+
+func _clear_pending_escape() -> void:
+	_pending_escape_side = -1
+	_escape_squares.clear()
+
+
 func _play_error(card_index: int, from: Vector2i, to: Vector2i) -> String:
 	if _is_over:
 		return "match_over"
+	if _pending_escape_side != -1:
+		return "escape_pending"
 	var side_state := _sides[_current]
 	if card_index < 0 or card_index >= side_state.hand.size():
 		return "bad_card_index"
@@ -407,12 +540,12 @@ func _credit_capture(victim: MatchPiece, credited_side: int, extra_points: int, 
 
 
 ## D29: the 8 squares around `center` explode; no chain reactions.
-func _explode(center: Vector2i, events: Array[Dictionary]) -> void:
+func _explode(center: Vector2i, side: int, events: Array[Dictionary]) -> void:
 	var blast: Array[Vector2i] = []
 	for offset in MoveGenerator.ALL_DIRECTIONS:
 		if _board.in_bounds(center + offset):
 			blast.append(center + offset)
-	events.append({"type": "explosion", "side": _current, "square": center, "squares": blast})
+	events.append({"type": "explosion", "side": side, "square": center, "squares": blast})
 	for square in blast:
 		var victim := _board.piece_at(square)
 		if victim == null:

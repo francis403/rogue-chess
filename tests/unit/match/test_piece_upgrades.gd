@@ -39,8 +39,10 @@ func test_shield_protects_the_king() -> void:
 	var game := H.make([H.piece("king", Vector2i(5, 0)), H.piece("rook", Vector2i(0, 0))],
 		[H.piece("king", Vector2i(0, 5), "standard", "shield")])
 	game.play(0, Vector2i(0, 0), Vector2i(0, 5))
+	game.decline_escape()
 	assert_false(game.is_over())
 	game.play(0, Vector2i(0, 0), Vector2i(0, 5))
+	game.decline_escape()
 	assert_eq(game.result()["reason"], "king")
 
 
@@ -50,7 +52,9 @@ func test_consumed_player_shield_is_reported_and_collection_untouched() -> void:
 		[H.piece("king", Vector2i(4, 5)), H.piece("rook", Vector2i(0, 5)), H.piece("rook", Vector2i(5, 4))])
 	game.end_turn()
 	game.play(0, Vector2i(0, 5), Vector2i(0, 1))
+	game.decline_escape()
 	game.play(0, Vector2i(5, 4), Vector2i(5, 0))
+	game.decline_escape()
 	assert_true(game.is_over())
 	assert_eq(game.result()["shields_consumed"], [shielded.uid])
 	assert_eq(shielded.upgrade, "shield", "PieceData is never mutated")
@@ -60,6 +64,9 @@ func test_opponent_shield_is_not_reported() -> void:
 	var game := H.make([H.piece("king", Vector2i(5, 0)), H.piece("rook", Vector2i(0, 0))],
 		[H.piece("king", Vector2i(0, 5)), H.piece("pawn", Vector2i(0, 3), "standard", "shield")])
 	game.play(0, Vector2i(0, 0), Vector2i(0, 3))
+	game.decline_escape()
 	game.play(0, Vector2i(0, 0), Vector2i(0, 3))
+	game.decline_escape()
 	game.play(0, Vector2i(0, 3), Vector2i(0, 5))
+	game.decline_escape()
 	assert_eq(game.result()["shields_consumed"], [])

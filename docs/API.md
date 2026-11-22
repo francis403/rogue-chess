@@ -43,7 +43,11 @@ var game := ChessMatch.new({
 | `is_card_playable(card_index)` | bool — current side; affordable and moves at least one piece (D7) |
 | `pieces_for_card(card_index)` | `Array[Vector2i]` squares of current-side pieces the card can move now (empty if unaffordable) |
 | `targets(card_index, from)` | `Array[Vector2i]` destinations for that card on that piece (empty if not allowed/affordable) |
-| `can_redraw()` | bool — not over, energy ≥ `redraw_cost`, and `legal_plays` is empty (D8) |
+| `can_redraw()` | bool — not over, no escape pending, energy ≥ `redraw_cost`, and `legal_plays` is empty (D8) |
+| `pending_escape_side()` | 0/1 — the side that must answer a check now (escape or decline), **-1** if none (D57) |
+| `escape_squares()` | `Array[Vector2i]` safe king destinations for the pending escape (`[]` if none pending) |
+| `escape_penalty(side)` | int — energy that will come off `side`'s next turn for escapes made so far (D59) |
+| `in_check(side)` | bool — an enemy piece could capture `side`'s king with its raw movement right now |
 
 `MatchPiece` fields: `uid` (match-local, unique, stable for the match), `side`, `type` (current type — a promoted pawn is `"queen"`), `square`, `data` (`PieceData` copy: `data.uid` is the collection uid, `data.upgrade`, `data.piece_set`), `shield_active`, `burn_turns_left` (0 = not burning), `is_promoted`, `has_moved`; `is_burning()`, `value()` (current capture points), `burn_turns()`, `capture_bonus()`.
 
@@ -51,12 +55,16 @@ Card rules: a card moves one piece of its type; `"move"` moves any piece and is 
 
 ### Actions (current side only)
 
-Each returns `Array[Dictionary]` of events. An illegal call changes nothing and returns exactly `[{"type": "error", "reason": String}]`; reasons: `match_over`, `bad_card_index`, `no_own_piece`, `wrong_card`, `not_enough_energy`, `illegal_move`, `redraw_not_allowed`. Nothing ever crashes on bad input.
+Each returns `Array[Dictionary]` of events. An illegal call changes nothing and returns exactly `[{"type": "error", "reason": String}]`; reasons: `match_over`, `escape_pending`, `no_escape_pending`, `bad_card_index`, `no_own_piece`, `wrong_card`, `not_enough_energy`, `illegal_move`, `redraw_not_allowed`. Nothing ever crashes on bad input.
+
+**Driver loop (UI, AI, sim):** always check `pending_escape_side()` first. If it is not -1, that side must call `escape(to)` or `decline_escape()`; every other action from either side returns `escape_pending`, and `legal_plays()` is `[]` for both sides. `current_side()` stays the side that gave check, which then continues its turn.
 
 - `play(card_index, from, to)` — spends the card's cost, discards the card, resolves the move (D13 order): shield block **or** capture → points → explosion → ignite → promotion → win check.
+- `escape(to: Vector2i)` — only while an escape is pending, `to` ∈ `escape_squares()`. The checked king moves there out of turn, with no card. The move resolves like any move: capture, points (+ Trophy Case), the escaping side's Powder Keg, win check. Adds `check_escape_cost` to `escape_penalty(side)`. No check is looked for afterwards (D56).
+- `decline_escape()` — only while an escape is pending; the king stays in check (D58).
 - `redraw()` — only when `can_redraw()`. Costs `redraw_cost`, discards the **whole** hand (Hold cards included, D8), draws a fresh hand. Repeatable while affordable.
 - `end_turn()` — also the player's "skip". Burn ticks for this side's burning pieces (D24), discard non-Hold cards (D5), turn limit check (after the second side's turn of round `max_rounds`), then the other side's turn starts: energy refill, draw to 5 (reshuffle when needed, D6), no-move check (D14).
-- `clone() -> ChessMatch` — deep copy (board, pieces, decks, RNG state) for AI search; the copy plays out exactly like the original. Cards and `PieceData` are shared (immutable here). Cost ≈ 0.15 ms per clone and ≈ 0.25 ms of move generation per side (debug build) — for depth 2, clone once per own play and evaluate replies with `piece_moves()` / `piece_at()` on that clone rather than cloning per reply.
+- `clone() -> ChessMatch` — deep copy (board, pieces, decks, RNG state, pending escape and penalties) for AI search; the copy plays out exactly like the original. Cards and `PieceData` are shared (immutable here). Cost ≈ 0.15 ms per clone and ≈ 0.25 ms of move generation per side (debug build) — for depth 2, clone once per own play and evaluate replies with `piece_moves()` / `piece_at()` on that clone rather than cloning per reply.
 
 ### Result (`result()` once `is_over()`)
 
@@ -77,8 +85,8 @@ Every event has `"type"`; most have `"side"` (the side it concerns). `uid` is th
 
 | type | keys | when |
 |---|---|---|
-| `turn_start` | side, round | a side's turn begins |
-| `energy` | side, energy | energy refilled at turn start |
+| `turn_start` | side, round, escape_penalty | a side's turn begins |
+| `energy` | side, energy, escape_penalty | energy refilled at turn start: `energy = max(max_energy − escape_penalty, 0)`; the penalty then resets to 0 |
 | `shuffle` | side, count | discard shuffled into the empty draw pile |
 | `draw` | side, card_uid, card_type | one card drawn (the UI hides the opponent's) |
 | `card_played` | side, card_index, card_uid, card_type, cost, energy (left) | first event of every legal `play` |
@@ -91,6 +99,9 @@ Every event has `"type"`; most have `"side"` (the side it concerns). `uid` is th
 | `burn_tick` | side, uid, square, turns_left | end of the owner's turn |
 | `burn_out` | side (owner), uid, piece_type, square, by_side, points, cause "burn_out" | burned piece removed, credited to the opponent |
 | `promotion` | side, uid, square, piece_type ("queen") | pawn reached the far rank |
+| `check` | side (checked side), king_square, checkers (`Array[Vector2i]`), escape_squares (`Array[Vector2i]`), can_escape (bool), cost, budget | after a `play()` that leaves the match running, when the mover attacks the enemy king. `can_escape` false (no pending state) if no safe square or `budget` = max_energy − escape_penalty < cost |
+| `escape` | side, uid, from, to, cost, penalty (total so far) | first event of `escape()`, followed by its `move` / `capture` / `explosion` / `score` / `match_over` events |
+| `escape_declined` | side | the only event of `decline_escape()` |
 | `redraw` | side, energy (left) | start of a `redraw()` |
 | `discard` | side, card_uids | hand discarded (end of turn: Hold cards stay; redraw: whole hand) |
 | `turn_end` | side, round | after the discard |
@@ -105,6 +116,7 @@ Every event has `"type"`; most have `"side"` (the side it concerns). `uid` is th
 - Trophy Case +1 also applies to 0-value pieces (king, Fire pawn).
 - Promoted pawns keep their piece set (a Fire pawn becomes a Fire queen worth 7) and their burn timer.
 - Turn limit and round counting follow the side that moves first.
+- Check escape: a square holding a shielded enemy piece is never an escape square (the shield would block the capture and the king would not move). Safe = no enemy piece could capture the king there with raw movement on the board after the move (Powder Keg blasts are not considered). Checks are evaluated after every card play, so after a decline any further play by the checking side offers a new escape while the king stays attacked (D60).
 
 ## RunSession
 
@@ -125,10 +137,10 @@ var next_run := RunSession.new(new_seed, meta, logger)   # one RunSession per ru
 ```
 SET_SELECT -> ARTIFACT_SELECT (skipped when no artifact is unlocked, D40) -> MAP
 MAP -> choose_node(): match/boss node -> MATCH_SETUP -> MATCH -> REWARD -> MAP
-                      shop node       -> SHOP     -> MAP
-                      coaching node   -> COACHING -> MAP
+					  shop node       -> SHOP     -> MAP
+					  coaching node   -> COACHING -> MAP
 finish_match(): loss (any node)  -> RUN_END (+1 random artifact unlocked, D37)
-                boss win         -> RUN_END (Fire unlocked)
+				boss win         -> RUN_END (Fire unlocked)
 ```
 
 `run.phase` (enum), `run.phase_name()` ("MAP", ...), `run.is_over()` (phase == RUN_END).
@@ -237,9 +249,9 @@ Only `winner` is required. Effects: pieces in `shields_consumed` that still have
 ```
 {"seed", "started_at", "finished_at", "piece_set", "artifacts",
  "matches": [{"node", "floor", "opponent", "result": "win"|"loss", "reason", "scores",
-              "deck": [card dicts at the win/loss], "roster": [piece dicts + "square": [x, y]],
-              "pieces_used": [roster piece dicts, pre-match upgrades], "pieces_moved": [roster piece dicts, pre-match upgrades],
-              "shields_consumed": [uids], "points_after"}],
+			  "deck": [card dicts at the win/loss], "roster": [piece dicts + "square": [x, y]],
+			  "pieces_used": [roster piece dicts, pre-match upgrades], "pieces_moved": [roster piece dicts, pre-match upgrades],
+			  "shields_consumed": [uids], "points_after"}],
  "events": [{"kind": "reward"|"reward_skip"|"purchase_card"|"purchase_piece"|"remove_card"|"upgrade", "node", "card"|"piece", "price"|"points"}],
  "summary": RunSession.summary()}
 ```
@@ -251,35 +263,39 @@ Only `winner` is required. Effects: pieces in `shields_consumed` that still have
 
 ```gdscript
 var ai := MatchAI.new(ChessMatch.OPPONENT, setup["opponent"]["search_depth"], setup["opponent"]["random_chance"], rng, setup["opponent"]["deck"])
-while not game.is_over() and game.current_side() == ChessMatch.OPPONENT:
-    var action := ai.choose_action(game)        # decide (a few ms)
-    var events := MatchAI.apply_action(game, action)   # perform it; animate the events
+# the AI acts on its own turn, and out of turn whenever it must answer a check (D57)
+while not game.is_over() and (game.pending_escape_side() == ChessMatch.OPPONENT
+		or (game.pending_escape_side() == -1 and game.current_side() == ChessMatch.OPPONENT)):
+	var action := ai.choose_action(game)        # decide (a few ms)
+	var events := MatchAI.apply_action(game, action)   # perform it; animate the events
 ```
 
 | call | returns |
 |---|---|
 | `MatchAI.new(side, search_depth, random_chance, rng: RandomNumberGenerator, deck: Array = [])` | the RNG is used for random plays and tie-breaks (share one per match or per sim) |
-| `choose_action(match)` | `{"kind": "play", "card_index", "from", "to"}`, `{"kind": "redraw"}` or `{"kind": "end_turn"}` — always legal right now: a play is an entry of `legal_plays(side)`, redraw only when `can_redraw()`, end_turn only when no card is playable. Call it only on this side's turn of a running match (otherwise it `push_error`s and returns end_turn). |
-| `MatchAI.apply_action(match, action)` (static) | the events of `play` / `redraw` / `end_turn` |
+| `choose_action(match)` | When `match.pending_escape_side() == side` (whoever's turn it is): `{"kind": "escape", "to": Vector2i}` (`to` ∈ `escape_squares()`) or `{"kind": "decline_escape"}`. Otherwise, on this side's turn: `{"kind": "play", "card_index", "from", "to"}`, `{"kind": "redraw"}` or `{"kind": "end_turn"}`. Always legal right now: a play is an entry of `legal_plays(side)`, redraw only when `can_redraw()`, end_turn only when no card is playable. Called when this side can't act (match over, the other side's turn or escape) it `push_error`s and returns end_turn. |
+| `MatchAI.apply_action(match, action)` (static) | the events of `play` / `redraw` / `end_turn` / `escape` / `decline_escape` |
 | `evaluate(match)` | float, static score of the position from this side's view |
 | `side`, `search_depth`, `random_chance` | read-only vars |
 
 Behaviour:
 - One card per call (the caller loops until the turn ends). Never ends the turn while a card is playable. When nothing is playable it redraws only if `can_redraw()` and the energy left after the redraw still pays for the cheapest card in its deck (a 0-cost card counts); otherwise it ends the turn. Pass the side's match deck as the optional 5th constructor argument `deck` (e.g. `setup["opponent"]["deck"]`); without it the AI judges by the cheapest card in its hand.
+- **Check escape** (D56–D62): escapes to the safe square with the best `evaluate` minus king safety, unless the king is shielded (the capture only costs the shield, `shield_bonus`): then it declines. An unshielded king always escapes, even from a checker with 0 energy left (Cheaper cards can cost 0). `random_chance` does not apply to escapes.
 - With probability `random_chance`: a uniformly random entry of `legal_plays`.
 - Otherwise every distinct (from, to) is simulated once with the cheapest card that can make it (a specific card before Move on ties), via `clone()` + `play()` — so Fire, shields, Powder Keg, holes, promotion and wins are exactly the engine's.
+- If its play gives a check the enemy can escape, the clone resolves it with a cheap model of the defender (decline if its king is shielded, else escape onto the most valuable capture, first square on ties) before anything is evaluated — so a check is never mistaken for a won king.
 - Every depth: value = `evaluate` after its play − `energy_weight` × card cost − **king safety** (below). Ties within `tie_epsilon` are broken with the RNG.
 - Depth 2 adds:
-  - **Follow-up win**: if, still on its own turn, a card left in hand can then take the enemy king or a piece that reaches `target_score`, the play is worth `follow_up_win_factor` × `win_score` (a sure win: the enemy can't answer in between). This lets it play 2-card combos.
+  - **Follow-up win**: if, still on its own turn, a card left in hand can then take the enemy king or a piece that reaches `target_score` (confirmed by playing it on a clone), the play is worth `follow_up_win_factor` × `win_score` (a sure win: the enemy can't answer in between). This lets it play 2-card combos.
   - **Best single reply**: subtracts the opponent's best reply, where a reply is **any** raw piece move (`piece_moves`, the AI can't see the hand); only captures count, computed statically (shield, Fire/Trophy Case points, the opponent's Powder Keg blast, a pawn capture that promotes, D13 king/score wins).
 - King safety (D4: the enemy plays several cards per turn, which one reply can't see), on a static board:
-  - `king_threat_penalty` if some enemy piece can capture the king within min(`threat_horizon_moves`, enemy max energy ÷ cheapest card cost) raw moves (1: it already attacks; 2: one move onto a square attacking it — capturing a blocker included — then the capture; a pawn reaching the last rank attacks as a queen).
-  - The same for its `threat_targets` pieces (queen, rook) at `piece_threat_factor` × (`score_weight` + `material_weight`) × value. Shielded pieces are ignored.
+  - `king_threat_penalty` if some enemy piece can capture the king within min(`threat_horizon_moves`, enemy max energy ÷ cheapest card cost) raw moves (1: it already attacks; 2: one move onto a square attacking it — capturing a blocker included — then the capture; a pawn reaching the last rank attacks as a queen). A 2-move threat passes through a check, so it is scaled by `escapable_threat_factor` while this side's escape budget (max energy − `escape_penalty`) still covers `check_escape_cost`.
+  - Its `threat_targets` pieces (queen, rook) that an enemy piece can take right now: `piece_threat_factor` × (`score_weight` + `material_weight`) × value each. Shielded pieces are ignored.
   - `king_exposure_weight` per square a queen standing on the king's square could reach (open lines around the king).
-- `evaluate`: ±`win_score` once the match is over; else `score_weight` × score difference + per side (own − enemy): `material_weight` × `value()`, `shield_bonus` per active shield, `advance_weight` × ranks advanced (non-king pieces), and a burning piece costs `burn_pending_factor` × (`score_weight` + `material_weight`) × its value (it will burn out into enemy points).
+- `evaluate`: ±`win_score` once the match is over; else `score_weight` × score difference + per side (own − enemy): `material_weight` × `value()`, `shield_bonus` per active shield, `advance_weight` × ranks advanced (non-king pieces), `escape_energy_weight` × the other side's `escape_penalty` (energy it loses next turn; so making the enemy escape is worth something and escaping costs), and a burning piece costs `burn_pending_factor` × (`score_weight` + `material_weight`) × its value (it will burn out into enemy points).
 - Weights: `config/ai.json` (`move_delay_seconds` is for the UI only).
-- Speed (debug build, measured by the sim and `test_depth_two_decisions_are_fast`): depth 2 ≈ 2 ms average, ≈ 10–13 ms worst case per decision over 300 simulated runs.
+- Speed (debug build, measured by the sim and `test_depth_two_decisions_are_fast`): depth 2 ≈ 1.9 ms average, ≈ 14–16 ms worst case per decision over 300 simulated runs (engine `clone()` + `play()` is about half of it).
 
 ### Sim bot
 
-`/Applications/Godot.app/Contents/MacOS/Godot --headless -s tools/sim/run_sim.gd -- --runs=100 --seed=1` — plays full runs with random-but-valid run choices (piece set incl. Fire once unlocked, artifacts, map, rewards, shop buys/removes, coaching, default or random rosters) and `MatchAI` on both sides (the player bot cycles depth 2 / depth 2 + 10 % random / depth 1 + 20 % random). Writes only under `user://sim/cli/` (wiped at start; meta persists across the runs of one invocation). Checks every action (no error results, AI contract, match invariants incl. one king per side, no unpromoted pawn on the far rank and scores equal to the summed `score` events, termination, no engine/script errors), every run reaching RUN_END within a step cap, and the run logs. Prints a summary; exit code 0 only with zero failures. The driver is `tools/sim/sim_driver.gd` (also used by `tests/integration/test_sim_smoke.gd`).
+`/Applications/Godot.app/Contents/MacOS/Godot --headless -s tools/sim/run_sim.gd -- --runs=100 --seed=1` — plays full runs with random-but-valid run choices (piece set incl. Fire once unlocked, artifacts, map, rewards, shop buys/removes, coaching, default or random rosters) and `MatchAI` on both sides (the player bot cycles depth 2 / depth 2 + 10 % random / depth 1 + 20 % random). Writes only under `user://sim/cli/` (wiped at start; meta persists across the runs of one invocation). Answers every pending check through the checked side's AI (15 % of the time with a random escape/decline instead). Checks every action (no error results, AI contract — while an escape is pending only escape to an offered square or decline is accepted, match invariants incl. escape penalties never negative, turn-start energy = max(max energy − escape penalty, 0), one king per side, no unpromoted pawn on the far rank and scores equal to the summed `score` events, termination, no engine/script errors), every run reaching RUN_END within a step cap, and the run logs. Prints a summary (incl. checks, checks with no escape, escapes, declines); exit code 0 only with zero failures. The driver is `tools/sim/sim_driver.gd` (also used by `tests/integration/test_sim_smoke.gd`).

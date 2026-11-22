@@ -52,6 +52,7 @@ func test_first_to_target_score_wins() -> void:
 	var game := H.make([H.piece("king", Vector2i(5, 0)), H.piece("rook", Vector2i(3, 2))],
 		[H.piece("king", Vector2i(0, 5)), H.piece("queen", Vector2i(3, 5)), H.piece("knight", Vector2i(4, 5))])
 	game.play(0, Vector2i(3, 2), Vector2i(3, 5))
+	game.decline_escape()
 	assert_eq(game.score(P), 8)
 	assert_false(game.is_over())
 	var events := game.play(0, Vector2i(3, 5), Vector2i(4, 5))

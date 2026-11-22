@@ -38,7 +38,7 @@
     "difficulty": "Boss",
     "search_depth": 2,
     "random_chance": 0.05,
-    "artifact_count": 2,
+    "artifact_count": 3,
     "pieces": [
       { "type": "king",  "square": [2, 5] },
       { "type": "queen", "square": [3, 5] },

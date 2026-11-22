@@ -45,16 +45,22 @@ func _random_setup(seed_value: int) -> Dictionary:
 	})
 
 
+## The side that must act now: the checked side while an escape is pending (D57).
+func _acting_side(game: ChessMatch) -> int:
+	return game.pending_escape_side() if game.pending_escape_side() != -1 else game.current_side()
+
+
 func _ai_pair(seed_value: int, player_config: Array, opponent_config: Array) -> Array[MatchAI]:
 	var rng := _rng(seed_value)
 	return [MatchAI.new(P, player_config[0], player_config[1], rng), MatchAI.new(O, opponent_config[0], opponent_config[1], rng)]
 
 
 ## Plays to the end; returns the action list. Fails the test on any contract break.
+## Escape answers (escape / decline_escape) are part of the list.
 func _play_out(game: ChessMatch, ais: Array[MatchAI], context: String) -> Array[Dictionary]:
 	var actions: Array[Dictionary] = []
 	while not game.is_over() and actions.size() < MAX_ACTIONS_PER_MATCH:
-		var action := ais[game.current_side()].choose_action(game)
+		var action := ais[_acting_side(game)].choose_action(game)
 		var contract_error := SimDriver.action_error(game, action)
 		if contract_error != "":
 			fail_test("%s: %s" % [context, contract_error])
@@ -69,13 +75,17 @@ func _play_out(game: ChessMatch, ais: Array[MatchAI], context: String) -> Array[
 
 func test_actions_are_always_legal_over_random_positions() -> void:
 	var decisions := 0
+	var escape_answers := 0
 	for seed_value in range(1, FUZZ_MATCHES + 1):
 		var game := ChessMatch.new(_random_setup(seed_value))
 		var configs: Array = [AI_CONFIGS[seed_value % AI_CONFIGS.size()], AI_CONFIGS[(seed_value / AI_CONFIGS.size()) % AI_CONFIGS.size()]]
-		decisions += _play_out(game, _ai_pair(seed_value, configs[0], configs[1]), "seed %d" % seed_value).size()
+		var actions := _play_out(game, _ai_pair(seed_value, configs[0], configs[1]), "seed %d" % seed_value)
+		decisions += actions.size()
+		escape_answers += actions.filter(func(action: Dictionary) -> bool: return action["kind"] in ["escape", "decline_escape"]).size()
 		assert_true(game.is_over(), "seed %d terminates" % seed_value)
 	assert_gt(decisions, 300)
-	gut.p("legal fuzz: %d decisions" % decisions)
+	assert_gt(escape_answers, 0, "the fuzz exercises check escapes")
+	gut.p("legal fuzz: %d decisions, %d escape answers" % [decisions, escape_answers])
 
 
 func test_random_chance_one_is_still_legal() -> void:
@@ -91,7 +101,7 @@ func test_choose_action_never_mutates_the_match() -> void:
 		var ais := _ai_pair(seed_value, [2, 0.0], [2, 0.0])
 		while not game.is_over():
 			var before := H.snapshot(game)
-			var action := ais[game.current_side()].choose_action(game)
+			var action := ais[_acting_side(game)].choose_action(game)
 			assert_eq(H.snapshot(game), before, "seed %d" % seed_value)
 			MatchAI.apply_action(game, action)
 
@@ -144,26 +154,85 @@ func test_depth_two_keeps_a_two_move_threat_off_the_king() -> void:
 	assert_eq([action["from"], action["to"]], [Vector2i(5, 0), Vector2i(3, 1)])
 
 
-func test_sets_up_a_king_capture_for_the_next_card() -> void:
-	var game := H.make([H.piece("king", Vector2i(5, 0)), H.piece("rook", Vector2i(0, 0))],
-		[H.piece("king", Vector2i(3, 5)), H.piece("pawn", Vector2i(5, 4))])
+## The boxed-in king has no escape square (D57), so knight + knight takes it this turn.
+func test_sets_up_a_king_capture_the_enemy_cannot_escape() -> void:
+	var game := H.make([H.piece("king", Vector2i(0, 0)), H.piece("knight", Vector2i(2, 2))],
+		[H.piece("king", Vector2i(5, 5)), H.piece("pawn", Vector2i(4, 5)), H.piece("pawn", Vector2i(4, 4)), H.piece("pawn", Vector2i(5, 4))])
 	var ai := MatchAI.new(P, 2, 0.0, _rng(1))
 	MatchAI.apply_action(game, ai.choose_action(game))
 	assert_false(game.is_over())
+	assert_eq(game.pending_escape_side(), -1, "no escape square for the boxed king")
 	MatchAI.apply_action(game, ai.choose_action(game))
 	assert_eq(game.result().get("reason", ""), "king", "two cards in one turn take the king")
 
 
-## Rook takes the king on (2, 3), but with our own Powder Keg the blast also takes
-## our king on (2, 2): the mover loses (D13), so it is not a sure follow-up win.
-func test_follow_up_win_ignores_a_self_destructive_keg_capture() -> void:
-	for has_keg in [false, true]:
-		var game := H.make([H.piece("king", Vector2i(2, 2)), H.piece("rook", Vector2i(0, 3))],
-			[H.piece("king", Vector2i(2, 3)), H.piece("pawn", Vector2i(5, 4))],
-			["rook", "rook", "rook", "rook", "rook"], H.FIVE_MOVES,
-			{"player_artifacts": ["exploding"] if has_keg else []})  # rooks only: our king can't take it
-		var ai := MatchAI.new(P, 2, 0.0, _rng(1))
-		assert_eq(ai._has_winning_follow_up(game), not has_keg, "keg=%s" % has_keg)
+## Giving check is not a won king any more: the enemy escapes first (D57).
+func test_search_does_not_count_an_escapable_check_as_a_win() -> void:
+	var game := H.make([H.piece("king", Vector2i(5, 0)), H.piece("rook", Vector2i(0, 0))],
+		[H.piece("king", Vector2i(3, 5)), H.piece("pawn", Vector2i(5, 4))])
+	var ai := MatchAI.new(P, 2, 0.0, _rng(1))
+	var check_play := {"card_index": 0, "from": Vector2i(0, 0), "to": Vector2i(0, 5)}
+	var probe := game.clone()
+	probe.play(0, Vector2i(0, 0), Vector2i(0, 5))
+	assert_eq(probe.pending_escape_side(), O, "the move gives an escapable check")
+	assert_lt(ai._play_value(game, check_play), float(GameConfig.value("ai", "win_score")) * 0.1)
+
+
+## P's rook checks the opponent's king along rank 5 (after `quiet_moves_first`
+## Move cards spent on pawns); the AI under test plays O and must answer.
+func _checked_opponent(king_upgrade: String, quiet_moves_first: int) -> ChessMatch:
+	var game := H.make([H.piece("king", Vector2i(5, 0)), H.piece("rook", Vector2i(0, 0)), H.piece("pawn", Vector2i(5, 1)), H.piece("pawn", Vector2i(4, 1))],
+		[H.piece("king", Vector2i(2, 5), "standard", king_upgrade), H.piece("pawn", Vector2i(4, 4))])
+	var quiet: Array[Array] = [[Vector2i(5, 1), Vector2i(5, 2)], [Vector2i(4, 1), Vector2i(4, 2)]]
+	for i in quiet_moves_first:
+		game.play(0, quiet[i][0], quiet[i][1])
+	game.play(0, Vector2i(0, 0), Vector2i(0, 5))
+	assert_eq(game.pending_escape_side(), O, "rook on (0, 5) checks the king on (2, 5)")
+	return game
+
+
+func test_escapes_a_real_check() -> void:
+	var game := _checked_opponent("", 0)
+	var action := MatchAI.new(O, 2, 0.0, _rng(1)).choose_action(game)
+	assert_eq(action["kind"], "escape")
+	assert_true(game.escape_squares().has(action["to"]))
+	assert_eq(SimDriver.action_error(game, action), "")
+	var events := MatchAI.apply_action(game, action)
+	assert_eq(events[0]["type"], "escape")
+	assert_false(game.in_check(O))
+
+
+func test_declines_when_the_shield_would_hold() -> void:
+	var game := _checked_opponent("shield", 0)
+	var action := MatchAI.new(O, 2, 0.0, _rng(1)).choose_action(game)
+	assert_eq(action, {"kind": "decline_escape"})
+	assert_eq(MatchAI.apply_action(game, action)[0]["type"], "escape_declined")
+
+
+## Review repro: a checker with 0 energy left can still hold a 0-cost Cheaper Move.
+func test_escapes_even_when_the_checker_has_no_energy_left() -> void:
+	var game := H.make([H.piece("king", Vector2i(5, 0)), H.piece("rook", Vector2i(0, 0)), H.piece("pawn", Vector2i(4, 1))],
+		[H.piece("king", Vector2i(2, 5)), H.piece("pawn", Vector2i(4, 4))],
+		["rook", "pawn", "move:cheaper", "move:cheaper", "move:cheaper"])
+	H.play_type(game, "pawn", Vector2i(4, 1), Vector2i(4, 2))
+	H.play_type(game, "rook", Vector2i(0, 0), Vector2i(0, 5))
+	assert_eq(game.energy(P), 0)
+	assert_eq(game.pending_escape_side(), O)
+	var declined := game.clone()
+	declined.decline_escape()
+	H.play_type(declined, "move", Vector2i(0, 5), Vector2i(2, 5))
+	assert_eq(declined.result().get("reason", ""), "king", "declining loses to the 0-cost Move")
+	var action := MatchAI.new(O, 1, 0.0, _rng(1)).choose_action(game)
+	assert_eq(action["kind"], "escape")
+	assert_eq(SimDriver.action_error(game, action), "")
+
+
+func test_escape_answers_ignore_random_chance_and_whose_turn_it_is() -> void:
+	var game := _checked_opponent("", 0)
+	assert_eq(game.current_side(), P)
+	var action := MatchAI.new(O, 1, 1.0, _rng(3)).choose_action(game)
+	assert_true(action["kind"] in ["escape", "decline_escape"])
+	assert_eq(SimDriver.action_error(game, action), "")
 
 
 ## A pawn capture onto its last rank also makes a queen: that reply costs more.
@@ -230,7 +299,7 @@ func test_never_ends_the_turn_with_a_playable_card() -> void:
 		var game := ChessMatch.new(_random_setup(seed_value))
 		var ais := _ai_pair(seed_value, [2, 0.0], [1, 0.3])
 		while not game.is_over():
-			var action := ais[game.current_side()].choose_action(game)
+			var action := ais[_acting_side(game)].choose_action(game)
 			if action["kind"] == "end_turn":
 				assert_true(game.legal_plays(game.current_side()).is_empty(), "seed %d" % seed_value)
 			MatchAI.apply_action(game, action)
@@ -283,7 +352,7 @@ func test_depth_two_decisions_are_fast() -> void:
 		var ais := _ai_pair(seed_value, [2, 0.0], [2, 0.0])
 		while not game.is_over():
 			var started := Time.get_ticks_usec()
-			var action := ais[game.current_side()].choose_action(game)
+			var action := ais[_acting_side(game)].choose_action(game)
 			var elapsed := Time.get_ticks_usec() - started
 			total_usec += elapsed
 			max_usec = maxi(max_usec, elapsed)

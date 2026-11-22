@@ -42,6 +42,11 @@ func _default_game(seed_value: int = 7) -> ChessMatch:
 
 
 func _random_action(game: ChessMatch, rng: RandomNumberGenerator, play_chance: float = 0.85) -> Array[Dictionary]:
+	if game.pending_escape_side() != -1:
+		var squares := game.escape_squares()
+		if rng.randf() < 0.7:
+			return game.escape(squares[rng.randi_range(0, squares.size() - 1)])
+		return game.decline_escape()
 	var plays := game.legal_plays(game.current_side())
 	if not plays.is_empty() and rng.randf() < play_chance:
 		var choice: Dictionary = plays[rng.randi_range(0, plays.size() - 1)]
@@ -164,11 +169,15 @@ func test_result_reports_used_and_moved_pieces() -> void:
 	var game := H.make([{"piece": king, "square": Vector2i(5, 0)}, {"piece": rook, "square": Vector2i(0, 0)}, {"piece": idle, "square": Vector2i(1, 0)}],
 		[H.piece("king", Vector2i(0, 5)), H.piece("pawn", Vector2i(3, 4))])
 	game.play(0, Vector2i(0, 0), Vector2i(0, 4))
+	game.decline_escape()
 	game.play(0, Vector2i(0, 4), Vector2i(3, 4))
+	game.decline_escape()
 	game.play(0, Vector2i(3, 4), Vector2i(3, 5))
+	game.decline_escape()
 	game.end_turn()
 	game.end_turn()
 	game.play(0, Vector2i(3, 5), Vector2i(0, 5))
+	game.decline_escape()
 	var result := game.result()
 	assert_eq(H.sorted(result["player_pieces_used"]), H.sorted([king.uid, rook.uid, idle.uid]))
 	assert_eq(result["player_pieces_moved"], [rook.uid])
@@ -180,6 +189,7 @@ func test_result_reports_used_and_moved_pieces() -> void:
 
 func test_random_play_keeps_invariants_and_always_terminates() -> void:
 	var total_plays := 0
+	var escape_actions := {"escape": 0, "escape_declined": 0}
 	var reasons := {}
 	for seed_value in range(1, FUZZ_SEEDS + 1):
 		var setup := _full_setup(seed_value)
@@ -195,6 +205,8 @@ func test_random_play_keeps_invariants_and_always_terminates() -> void:
 			assert_ne(events[0]["type"], "error", "random legal action rejected, seed %d" % seed_value)
 			if events[0]["type"] == "card_played":
 				total_plays += 1
+			if escape_actions.has(events[0]["type"]):
+				escape_actions[events[0]["type"]] += 1
 			actions += 1
 			_assert_invariants(game, deck_sizes, seed_value)
 		assert_true(game.is_over(), "seed %d terminates" % seed_value)
@@ -203,7 +215,9 @@ func test_random_play_keeps_invariants_and_always_terminates() -> void:
 		reasons[result["reason"]] = true
 		assert_true(result["winner"] == P or result["winner"] == O)
 	assert_gt(total_plays, 2000, "thousands of random plays")
-	gut.p("fuzz: %d plays, reasons %s" % [total_plays, reasons.keys()])
+	assert_gt(escape_actions["escape"], 0, "escapes exercised")
+	assert_gt(escape_actions["escape_declined"], 0, "declines exercised")
+	gut.p("fuzz: %d plays, reasons %s, %s" % [total_plays, reasons.keys(), escape_actions])
 
 
 func _assert_invariants(game: ChessMatch, deck_sizes: Array, seed_value: int) -> void:
@@ -218,7 +232,7 @@ func _assert_invariants(game: ChessMatch, deck_sizes: Array, seed_value: int) ->
 				fail_test("piece on a hole, %s" % context)
 			if game.piece_at(match_piece.square) != match_piece:
 				fail_test("piece square out of sync, %s" % context)
-		if game.score(side) < 0 or game.energy(side) < 0:
+		if game.score(side) < 0 or game.energy(side) < 0 or game.escape_penalty(side) < 0:
 			fail_test("negative score/energy, %s" % context)
 		var cards := game.hand(side).size() + game.draw_pile_size(side) + game.discard_size(side)
 		if cards != deck_sizes[side]:

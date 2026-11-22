@@ -13,5 +13,7 @@
   "king_exposure_weight": 2,
   "piece_threat_factor": 0.5,
   "threat_targets": ["queen", "rook"],
+  "escape_energy_weight": 3,
+  "escapable_threat_factor": 0.25,
   "move_delay_seconds": 0.45
 }

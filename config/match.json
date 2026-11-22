@@ -7,5 +7,6 @@
   "energy_per_turn": 3,
   "redraw_cost": 1,
   "max_rounds": 40,
-  "player_moves_first": true
+  "player_moves_first": true,
+  "check_escape_cost": 1
 }

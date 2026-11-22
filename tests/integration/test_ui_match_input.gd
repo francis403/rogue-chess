@@ -52,7 +52,7 @@ func test_input_during_the_opponent_turn_does_nothing() -> void:
 	assert_true(await ui.until(func() -> bool: return game.current_side() == ChessMatch.OPPONENT and ui.screen().is_busy()))
 	var checks := 0
 	# Hammer the UI on every frame of the opponent's turn.
-	while game.current_side() == ChessMatch.OPPONENT and not game.is_over():
+	while game.current_side() == ChessMatch.OPPONENT and not game.is_over() and game.pending_escape_side() != ChessMatch.PLAYER:
 		var hand_before := ui.hand_uids()
 		var energy_before := game.energy(ChessMatch.PLAYER)
 		assert_true(end_turn.disabled, "End turn is disabled during the opponent's turn")
@@ -75,7 +75,7 @@ func test_input_during_the_opponent_turn_does_nothing() -> void:
 		checks += 1
 		await ui.frames(1)
 	assert_gt(checks, 0, "the opponent's turn took at least a frame")
-	assert_true(await ui.wait_match_idle())
+	assert_true(await ui.wait_player_turn())
 	if not game.is_over():
 		assert_eq(game.current_round(), round_before + 1, "the double End turn passed exactly one turn")
 		assert_eq(game.current_side(), ChessMatch.PLAYER)

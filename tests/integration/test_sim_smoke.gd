@@ -22,6 +22,8 @@ func test_sim_runs_finish_without_failures() -> void:
 	assert_eq(driver.failure_count(), 0)
 	assert_eq(driver.stats["runs"], SMOKE_RUNS)
 	assert_gte(driver.stats["matches"], SMOKE_RUNS, "every run plays at least one match")
+	assert_gt(driver.stats["checks"], 0, "checks happen")
+	assert_gt(driver.stats["escapes"] + driver.stats["escapes_declined"], 0, "and get answered")
 	assert_eq(_run_log_count(SMOKE_DIR + "logs/"), SMOKE_RUNS)
 	assert_eq(_read(REAL_META_PATH), real_meta_before, "the real meta.json is never touched")
 

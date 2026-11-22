@@ -13,6 +13,8 @@ var is_promoted: bool = false
 var is_locked: bool = false
 ## A Fire piece that hasn't moved yet: its first move ignites it.
 var can_ignite: bool = false
+## A king an enemy piece could capture right now.
+var is_in_check: bool = false
 var flash_color: Color = Color.TRANSPARENT:
 	set(value):
 		flash_color = value
@@ -53,6 +55,7 @@ func show_match_piece(piece: MatchPiece) -> void:
 	burn_left = piece.burn_turns_left
 	is_promoted = piece.is_promoted
 	can_ignite = piece.burn_turns() > 0 and not piece.is_burning()
+	is_in_check = false
 	queue_redraw()
 
 
@@ -68,6 +71,8 @@ func _draw() -> void:
 	draw_circle(centre + Vector2(0, radius * 0.08), radius, Color(0, 0, 0, 0.35))
 	draw_circle(centre, radius, disc)
 	draw_arc(centre, radius - 1.5, 0, TAU, 48, rim, maxf(2.0, radius * 0.08), true)
+	if is_in_check:
+		draw_arc(centre, radius + 3.5, 0, TAU, 48, Palette.OXBLOOD, 4.0, true)
 	if can_ignite:
 		draw_arc(centre, radius + 3.0, 0, TAU, 48, Color(Palette.EMBER, 0.45), 1.5, true)
 	if burn_left > 0:

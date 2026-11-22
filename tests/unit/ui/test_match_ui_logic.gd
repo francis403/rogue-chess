@@ -63,3 +63,37 @@ func test_redraw_leaves_a_play_compares_with_cheapest_deck_card() -> void:
 	assert_false(MatchUiLogic.redraw_leaves_a_play(1, 1, deck), "0 energy left pays for nothing")
 	assert_true(MatchUiLogic.redraw_leaves_a_play(1, 1, H.cards(["pawn:cheaper"])), "a 0-cost card counts")
 	assert_false(MatchUiLogic.redraw_leaves_a_play(3, 1, []))
+
+
+func _checking_game() -> ChessMatch:
+	# The player's rook gives check along the file; the opponent king can step aside.
+	var game := H.make([H.piece("king", Vector2i(0, 0)), H.piece("rook", Vector2i(3, 1))],
+		[H.piece("king", Vector2i(2, 5))], ["rook", "rook", "rook", "rook", "rook"])
+	game.play(H.card_index(game, "rook"), Vector2i(3, 1), Vector2i(2, 1))
+	return game
+
+
+func test_next_turn_energy_counts_pending_escapes() -> void:
+	var game := _checking_game()
+	assert_eq(game.pending_escape_side(), ChessMatch.OPPONENT)
+	assert_eq(MatchUiLogic.next_turn_energy(game, ChessMatch.OPPONENT), 3)
+	assert_eq(MatchUiLogic.next_turn_energy(game, ChessMatch.OPPONENT, 1), 2)
+	game.escape(game.escape_squares()[0])
+	assert_eq(MatchUiLogic.next_turn_energy(game, ChessMatch.OPPONENT), 2)
+
+
+func test_escape_targets_split_moves_and_captures() -> void:
+	var game := _checking_game()
+	var targets := MatchUiLogic.escape_targets(game)
+	assert_eq(targets["captures"], [] as Array[Vector2i])
+	assert_eq(H.sorted(targets["moves"]), H.sorted(game.escape_squares()))
+	assert_false(targets["moves"].is_empty())
+
+
+func test_event_text_for_check_and_escape() -> void:
+	var names := ["You", "Rex"]
+	var check := {"type": "check", "side": 1, "king_square": Vector2i(2, 5), "can_escape": true}
+	assert_eq(EventText.describe(check, names), "Check! Rex's king on c6 is attacked")
+	var escape := {"type": "escape", "side": 1, "from": Vector2i(2, 5), "to": Vector2i(3, 5), "cost": 1}
+	assert_string_contains(EventText.describe(escape, names), "c6 → d6")
+	assert_eq(EventText.describe({"type": "escape_declined", "side": 0}, names), "You stayed in check")

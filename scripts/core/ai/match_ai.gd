@@ -28,6 +28,9 @@ var _follow_up_win_factor: float
 var _piece_threat_factor: float
 var _threat_targets: Array
 var _min_card_cost: int
+var _escape_energy_weight: float
+var _escapable_threat_factor: float
+var _escape_cost: int
 
 
 ## `deck` is this side's match deck (setup["opponent"]["deck"]); it tells the AI whether a
@@ -53,15 +56,21 @@ func _init(ai_side: int, depth: int, chance: float, rng: RandomNumberGenerator, 
 	_follow_up_win_factor = float(weights["follow_up_win_factor"])
 	_piece_threat_factor = float(weights["piece_threat_factor"])
 	_threat_targets = weights["threat_targets"]
+	_escape_energy_weight = float(weights["escape_energy_weight"])
+	_escapable_threat_factor = float(weights["escapable_threat_factor"])
+	_escape_cost = int(GameConfig.value("match", "check_escape_cost"))
 	var base_costs: Array = GameConfig.data("cards").keys().map(func(card_type: String) -> int: return GameConfig.card_base_cost(card_type))
 	_min_card_cost = maxi(base_costs.min(), 1)
 
 
-## {"kind": "play", "card_index", "from", "to"}, {"kind": "redraw"} or {"kind": "end_turn"}.
-## Call it only on this AI's turn of a running match.
+## {"kind": "play", "card_index", "from", "to"}, {"kind": "redraw"} or {"kind": "end_turn"};
+## while this side must answer a check: {"kind": "escape", "to"} or {"kind": "decline_escape"}.
+## Call it only when this AI has to act: its turn, or its pending escape (D57).
 func choose_action(game: ChessMatch) -> Dictionary:
-	if game.is_over() or game.current_side() != side:
-		push_error("MatchAI: choose_action called when it is not this side's turn")
+	if not game.is_over() and game.pending_escape_side() == side:
+		return _escape_decision(game)
+	if game.is_over() or game.pending_escape_side() != -1 or game.current_side() != side:
+		push_error("MatchAI: choose_action called when this side can't act")
 		return {"kind": "end_turn"}
 	var plays := game.legal_plays(side)
 	if plays.is_empty():
@@ -78,6 +87,10 @@ static func apply_action(game: ChessMatch, action: Dictionary) -> Array[Dictiona
 			return game.play(action["card_index"], action["from"], action["to"])
 		"redraw":
 			return game.redraw()
+		"escape":
+			return game.escape(action["to"])
+		"decline_escape":
+			return game.decline_escape()
 	return game.end_turn()
 
 
@@ -87,7 +100,64 @@ func evaluate(game: ChessMatch) -> float:
 		return _win_score if int(game.result()["winner"]) == side else -_win_score
 	var enemy := 1 - side
 	var value := _score_weight * (game.score(side) - game.score(enemy))
+	value += _escape_energy_weight * (game.escape_penalty(enemy) - game.escape_penalty(side))
 	return value + _side_worth(game, side) - _side_worth(game, enemy)
+
+
+## D57/D58: escape to the best square (ranked with the threat terms), unless staying is
+## better: a shielded king only loses its shield. An unshielded king always escapes,
+## even from a checker with 0 energy left (Cheaper cards can cost 0).
+func _escape_decision(game: ChessMatch) -> Dictionary:
+	var best_to := Vector2i.ZERO
+	var best_rank := -INF
+	var best_value := -INF
+	for to in game.escape_squares():
+		var after := game.clone()
+		after.escape(to)
+		var value := evaluate(after)
+		var rank := value if after.is_over() else value - _multi_move_threat(after, _board_copy(after), _enemy_moves(after))
+		if rank > best_rank + _tie_epsilon:
+			best_rank = rank
+			best_value = value
+			best_to = to
+	if best_rank == -INF or _decline_value(game) > best_value + _tie_epsilon:
+		return {"kind": "decline_escape"}
+	return {"kind": "escape", "to": best_to}
+
+
+func _decline_value(game: ChessMatch) -> float:
+	var king := _king(game, side)
+	if king.shield_active:
+		return evaluate(game) - _shield_bonus
+	return evaluate(game) - _win_score
+
+
+## Search model of the enemy answering our check (the same rules as
+## _escape_decision, kept cheap): stay if shielded, else escape onto the most
+## valuable capture (first square on ties). 0 energy is no reason to stay:
+## Cheaper cards can cost 0.
+func _resolve_enemy_escape(game: ChessMatch) -> void:
+	var defender := game.pending_escape_side()
+	if _king(game, defender).shield_active:
+		game.decline_escape()
+		return
+	var squares := game.escape_squares()
+	var best_to := squares[0]
+	var best_gain := -1
+	for to in squares:
+		var victim := game.piece_at(to)
+		var gain := victim.value() if victim != null else 0
+		if gain > best_gain:
+			best_gain = gain
+			best_to = to
+	game.escape(best_to)
+
+
+func _king(game: ChessMatch, owner: int) -> MatchPiece:
+	for piece in game.pieces(owner):
+		if piece.type == "king":
+			return piece
+	return null
 
 
 ## D9, refined: redraw only if the energy left afterwards still pays for the
@@ -155,33 +225,45 @@ func _play_value(game: ChessMatch, play: Dictionary) -> float:
 	if events[0]["type"] == "error":
 		push_error("MatchAI: legal play rejected: %s" % events[0]["reason"])
 		return -INF
+	if after.pending_escape_side() == 1 - side:
+		_resolve_enemy_escape(after)
 	var value := evaluate(after) - _energy_weight * game.hand(side)[play["card_index"]].cost()
 	if after.is_over():
 		return value
+	var board := _board_copy(after)
 	var enemy_moves := _enemy_moves(after)
-	value -= _multi_move_threat(after, enemy_moves)
+	value -= _multi_move_threat(after, board, enemy_moves)
 	if search_depth < 2:
 		return value
-	if _has_winning_follow_up(after):
+	if _has_winning_follow_up(after, board):
 		return value + _win_score * _follow_up_win_factor
 	return value - _worst_reply_loss(after, enemy_moves)
 
 
 ## Still this side's turn: can a card left in hand capture the king or win the
 ## score race right away? The enemy can't answer in between, so it is a sure win.
-func _has_winning_follow_up(game: ChessMatch) -> bool:
+## (A check the enemy could escape was already resolved on `game`.)
+func _has_winning_follow_up(game: ChessMatch, board: MatchBoard) -> bool:
 	var hand := game.hand(side)
 	var energy := game.energy(side)
-	var points_needed := game.target_score() - game.score(side)
+	if _cheapest_cost(hand) < 0 or _cheapest_cost(hand) > energy:
+		return false
+	var most_points := 0
 	for piece in game.pieces(side):
-		if not _has_card_for(hand, energy, piece):
+		most_points = maxi(most_points, piece.capture_bonus())
+	most_points += _trophy_bonus(game, side)
+	var points_needed := game.target_score() - game.score(side)
+	for victim in game.pieces(1 - side):
+		if victim.shield_active or (victim.type != "king" and victim.value() + most_points < points_needed):
 			continue
-		for to in game.piece_moves(piece.square):
-			var victim := game.piece_at(to)
-			if victim == null or victim.shield_active:
+		var cache := {}
+		for piece in game.pieces(side):
+			if not _has_card_for(hand, energy, piece):
+				continue
+			if not _attack_squares(cache, board, piece, piece.type, victim.square).has(piece.square):
 				continue
 			var points := victim.value() + piece.capture_bonus() + _trophy_bonus(game, side)
-			if (victim.type == "king" or points >= points_needed) and _wins_after(game, piece, to):
+			if (victim.type == "king" or points >= points_needed) and _wins_after(game, piece, victim.square):
 				return true
 	return false
 
@@ -285,20 +367,34 @@ func _reply_loss(game: ChessMatch, attacker: MatchPiece, victim: MatchPiece) -> 
 
 
 ## D4: the enemy plays several cards per turn, which one reply can't see. Penalises
-## this side's king and threat_targets pieces that some enemy piece can capture
-## within the enemy's next-turn move budget (raw moves, board otherwise static),
-## plus every open queen-line square around the king.
-func _multi_move_threat(game: ChessMatch, enemy_moves: Array[Array]) -> float:
-	var board := _board_copy(game)
+## this side's threat_targets pieces (queen, rook) the enemy can take right now and its
+## king if some enemy piece can take it within the enemy's next-turn move budget (raw
+## moves on a static board, up to 2), plus every open queen-line square around the king.
+## A 2-move king threat goes through a check, which this side may escape (D57), so it
+## counts less then.
+func _multi_move_threat(game: ChessMatch, board: MatchBoard, enemy_moves: Array[Array]) -> float:
+	var attacked := {}
+	for entry in enemy_moves:
+		for to: Vector2i in entry[1]:
+			attacked[to] = true
 	var budget := mini(_threat_horizon, game.max_energy(1 - side) / _min_card_cost)
 	var penalty := 0.0
 	for target in game.pieces(side):
+		var weight := _threat_weight(target)
 		if target.type == "king":
 			penalty += _king_exposure_weight * _open_lines(board, target)
-		var weight := _threat_weight(target)
-		if budget >= 1 and weight > 0.0 and _capture_distance(game, board, target, enemy_moves, budget) <= budget:
+		if budget < 1 or weight <= 0.0:
+			continue
+		if attacked.has(target.square):
 			penalty += weight
+		elif target.type == "king" and budget >= 2 and _capture_distance(game, board, target, enemy_moves, budget) <= budget:
+			penalty += weight * (_escapable_threat_factor if _can_escape(game) else 1.0)
 	return penalty
+
+
+## D59: this side's next-turn budget still covers an escape if the enemy checks it.
+func _can_escape(game: ChessMatch) -> bool:
+	return game.max_energy(side) - game.escape_penalty(side) >= _escape_cost
 
 
 ## Squares a queen standing on the king's square could move to.
@@ -360,13 +456,15 @@ func _attack_squares(cache: Dictionary, board: MatchBoard, attacker: MatchPiece,
 	return squares
 
 
+## Scratch board for MoveGenerator probes. Only ever built from this AI's own search
+## clones, so it can hold their pieces directly (place() rewrites the same square).
 func _board_copy(game: ChessMatch) -> MatchBoard:
 	var board := MatchBoard.new(game.board_size())
 	for hole in game.holes():
 		board.add_hole(hole)
 	for owner in [ChessMatch.PLAYER, ChessMatch.OPPONENT]:
 		for piece in game.pieces(owner):
-			board.place(piece.copy(), piece.square)
+			board.place(piece, piece.square)
 	return board
 
 

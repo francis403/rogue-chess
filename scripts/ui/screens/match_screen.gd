@@ -39,6 +39,13 @@ var _opponent_piles: Label
 var _log: VBoxContainer
 var _log_scroll: ScrollContainer
 var _over_status: Label
+var _escape_box: PanelContainer
+var _escape_cost_label: Label
+var _stay_button: Button
+var _penalty_tag: Label
+var _opponent_penalty_tag: Label
+var _toast: PanelContainer
+var _last_checkers: Array[Vector2i] = []
 var _is_finishing: bool = false
 
 
@@ -85,6 +92,13 @@ func press_card(card_index: int) -> void:
 
 
 func press_square(square: Vector2i) -> void:
+	if _can_answer_escape():
+		if game.escape_squares().has(square):
+			_escape(square)
+		else:
+			_set_hint("Your king is in check. Click a highlighted square to escape, or press Stay.", Palette.OXBLOOD)
+			Ui.shake(_escape_box)
+		return
 	if not _can_act():
 		return
 	if _selected_from != NO_SQUARE and _targets.has(square):
@@ -153,6 +167,9 @@ func _left_column() -> VBoxContainer:
 	_opponent_energy.color = Palette.OXBLOOD
 	_opponent_energy.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	energy_line.add_child(_opponent_energy)
+	_opponent_penalty_tag = _new_penalty_tag()
+	_opponent_penalty_tag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	energy_line.add_child(_opponent_penalty_tag)
 	content.add_child(energy_line)
 	_opponent_piles = Ui.label("", "Caption")
 	content.add_child(_opponent_piles)
@@ -224,6 +241,8 @@ func _right_column() -> VBoxContainer:
 	_energy_label = Ui.label("", "Strong", Palette.BRASS)
 	energy_line.add_child(_energy_label)
 	content.add_child(energy_line)
+	_penalty_tag = _new_penalty_tag()
+	content.add_child(_penalty_tag)
 	_piles_label = Ui.label("", "Caption")
 	content.add_child(_piles_label)
 	content.add_child(Ui.artifact_chips(game.artifacts(PLAYER)))
@@ -233,6 +252,7 @@ func _right_column() -> VBoxContainer:
 	_hint.custom_minimum_size.y = 64
 	hint_panel.add_child(_hint)
 	column.add_child(hint_panel)
+	column.add_child(_escape_panel())
 	column.add_child(Ui.spacer())
 	_redraw_button = Ui.button("Redraw")
 	_redraw_button.tooltip_text = "Only when no card in hand is playable: discard and draw a new hand"
@@ -247,6 +267,32 @@ func _right_column() -> VBoxContainer:
 	keys.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(keys)
 	return column
+
+
+## The player's answer to a check: shown only while their escape is pending.
+func _escape_panel() -> PanelContainer:
+	_escape_box = Ui.panel()
+	_escape_box.add_theme_stylebox_override("panel", UiTheme.box(Palette.OXBLOOD.darkened(0.7), Palette.OXBLOOD, UiTheme.RADIUS, 12, 2))
+	_escape_box.visible = false
+	var column := Ui.vbox(8)
+	_escape_box.add_child(column)
+	column.add_child(Ui.label("Check!", "H2", Palette.OXBLOOD))
+	column.add_child(Ui.wrapped("Move your king to a highlighted square (no card needed), or stay put.", "Body", 210))
+	_escape_cost_label = Ui.wrapped("", "Caption", 210)
+	_escape_cost_label.add_theme_color_override("font_color", Palette.IVORY_SOFT)
+	column.add_child(_escape_cost_label)
+	_stay_button = Ui.button("Stay (keep the king in check)")
+	_stay_button.tooltip_text = "Decline the escape: your king stays where it is"
+	_stay_button.pressed.connect(_on_stay)
+	column.add_child(_stay_button)
+	return _escape_box
+
+
+func _new_penalty_tag() -> Label:
+	var tag := Ui.label("", "Caption", Palette.OXBLOOD)
+	tag.tooltip_text = "Check escapes made this round come off that side's next turn"
+	tag.mouse_filter = Control.MOUSE_FILTER_PASS
+	return tag
 
 
 func _fixed_label(text: String, width: float) -> Label:
@@ -275,6 +321,7 @@ func _sync_tokens() -> void:
 			if token == null:
 				token = PieceToken.create(48)
 			token.show_match_piece(piece)
+			token.is_in_check = piece.type == "king" and game.in_check(side)
 			_board.set_token(piece.uid, token, piece.square)
 	for key in _board.token_keys():
 		if not alive.has(key):
@@ -304,16 +351,27 @@ func _sync_panels() -> void:
 	_opponent_energy.value = game.energy(OPPONENT)
 	_opponent_piles.text = "Draw %d · Discard %d · Deck %d" % [game.draw_pile_size(OPPONENT), game.discard_size(OPPONENT), game.deck_size(OPPONENT)]
 	_sync_opponent_hand()
+	_sync_penalties()
 	_score.set_scores(game.score(PLAYER), game.score(OPPONENT))
 	var is_my_turn := _is_my_turn()
 	_turn_label.text = "Your turn" if game.current_side() == PLAYER else "%s's turn" % _names[OPPONENT]
 	_turn_label.add_theme_color_override("font_color", Palette.IVORY if game.current_side() == PLAYER else Palette.OXBLOOD)
 	_turn_caption.text = "Round %d of %d" % [game.current_round(), game.max_rounds()]
+	if game.pending_escape_side() == PLAYER:
+		_turn_label.text = "Check!"
+		_turn_label.add_theme_color_override("font_color", Palette.OXBLOOD)
 	var redraw_cost := int(GameConfig.value("match", "redraw_cost"))
 	_redraw_button.text = "Redraw hand · %d energy" % redraw_cost
 	_redraw_button.disabled = not (is_my_turn and game.can_redraw())
 	_end_turn_button.disabled = not is_my_turn
 	_end_turn_button.text = "End turn" if not game.legal_plays(PLAYER).is_empty() or not is_my_turn else "End turn (nothing playable)"
+
+
+func _sync_penalties() -> void:
+	for side in [PLAYER, OPPONENT]:
+		var tag := _penalty_tag if side == PLAYER else _opponent_penalty_tag
+		var penalty := game.escape_penalty(side)
+		tag.text = "−%d next turn" % penalty if penalty > 0 else ""
 
 
 func _sync_opponent_hand() -> void:
@@ -332,6 +390,14 @@ func _show_selection() -> void:
 	for i in _card_views.size():
 		_card_views[i].is_selected = i == _selected_card
 		_card_views[i].is_highlighted = false
+	var is_prompt := not game.is_over() and game.pending_escape_side() == PLAYER
+	_escape_box.visible = is_prompt
+	if is_prompt:
+		_show_escape_prompt()
+		return
+	_board.threats.clear()
+	if game.pending_escape_side() != -1:
+		_board.threats.assign(_last_checkers)
 	if not _is_my_turn():
 		_board.clear_highlights()
 		_set_hint("Match over." if game.is_over() else "%s is thinking…" % _names[OPPONENT], Palette.IVORY_FAINT)
@@ -357,6 +423,20 @@ func _show_selection() -> void:
 		_set_hint(_stuck_hint(), Palette.IVORY_SOFT)
 	else:
 		_set_hint("Pick a card, or click one of your highlighted pieces.", Palette.IVORY_SOFT)
+
+
+func _show_escape_prompt() -> void:
+	var targets := MatchUiLogic.escape_targets(game)
+	var king_square := NO_SQUARE
+	for piece in game.pieces(PLAYER):
+		if piece.type == "king":
+			king_square = piece.square
+	_board.threats.assign(_last_checkers)
+	_board.set_highlights([], targets["moves"], targets["captures"], king_square)
+	_escape_cost_label.text = "Costs %d energy from your next turn · next turn: %d/%d" % [
+		MatchUiLogic.escape_cost(), MatchUiLogic.next_turn_energy(game, PLAYER, 1), game.max_energy(PLAYER)]
+	_stay_button.disabled = _is_busy
+	_set_hint("Check! %s attacks your king." % _names[OPPONENT], Palette.OXBLOOD)
 
 
 func _stuck_hint() -> String:
@@ -407,15 +487,33 @@ func _can_act() -> bool:
 	return not _is_busy and _is_my_turn()
 
 
+## The player's own turn with nothing pending: cards, Redraw and End turn work.
 func _is_my_turn() -> bool:
-	return not game.is_over() and game.current_side() == PLAYER
+	return not game.is_over() and game.pending_escape_side() == -1 and game.current_side() == PLAYER
 
 
+func _can_answer_escape() -> bool:
+	return not _is_busy and not game.is_over() and game.pending_escape_side() == PLAYER
+
+
+## Esc / right-click: drop the selection. During an escape prompt it only keeps the prompt.
 func _cancel() -> void:
 	_selected_card = -1
 	_selected_from = NO_SQUARE
-	if _can_act():
+	if _can_act() or _can_answer_escape():
 		_show_selection()
+
+
+func _escape(to: Vector2i) -> void:
+	if not _can_answer_escape():
+		return
+	await _run(game.escape(to))
+
+
+func _on_stay() -> void:
+	if not _can_answer_escape():
+		return
+	await _run(game.decline_escape())
 
 
 func _refuse(square: Vector2i, reason: String) -> void:
@@ -452,34 +550,44 @@ func _on_end_turn() -> void:
 	await _run(game.end_turn())
 
 
-## Animates the events, then hands over to the opponent or the match-over overlay.
+## Animates the events, then lets the opponent act (its turn, or its answer to
+## a check) until the player has to decide something or the match is over.
 func _run(events: Array[Dictionary]) -> void:
 	_is_busy = true
 	_board.clear_highlights()
 	await _apply(events)
-	if not game.is_over() and game.current_side() == OPPONENT:
-		await _opponent_turn()
+	await _opponent_turn()
 	_is_busy = false
 	_sync()
 	if game.is_over():
 		_show_match_over()
 
 
+## Plays opponent actions one at a time. Stops when the player must act: their
+## turn, or their escape prompt (the opponent's turn resumes after the answer).
 func _opponent_turn() -> void:
 	var actions := 0
-	while not game.is_over() and game.current_side() == OPPONENT:
+	while not game.is_over() and _opponent_must_act():
 		_sync_panels()
 		_show_selection()
 		await _wait(_move_delay)
+		var is_escape := game.pending_escape_side() == OPPONENT
 		var action := _ai.choose_action(game)
 		actions += 1
 		if actions > MAX_OPPONENT_ACTIONS:
-			action = {"kind": "end_turn"}
+			action = {"kind": "decline_escape" if is_escape else "end_turn"}
 		var events := MatchAI.apply_action(game, action)
 		if events.size() == 1 and events[0]["type"] == "error":
-			push_error("Opponent action refused (%s); ending its turn" % events[0]["reason"])
-			events = game.end_turn()
+			push_error("Opponent action %s refused (%s)" % [action, events[0]["reason"]])
+			events = game.decline_escape() if is_escape else game.end_turn()
 		await _apply(events)
+
+
+func _opponent_must_act() -> bool:
+	var pending := game.pending_escape_side()
+	if pending != -1:
+		return pending == OPPONENT
+	return game.current_side() == OPPONENT
 
 
 func _make_ai(setup: Dictionary) -> MatchAI:
@@ -505,6 +613,13 @@ func _apply(events: Array[Dictionary]) -> void:
 				draws[event["side"]] += 1
 			"turn_start", "energy", "redraw", "card_played":
 				_on_side_change(event)
+				_sync_penalties()
+			"check":
+				await _animate_check(event)
+			"escape":
+				_on_escape(event)
+			"escape_declined":
+				_show_toast("%s %s in check" % [_names[event["side"]], "stay" if event["side"] == PLAYER else "stays"], Palette.IVORY_SOFT)
 			"move":
 				await _animate_move(event)
 			"capture":
@@ -547,6 +662,53 @@ func _on_side_change(event: Dictionary) -> void:
 		_turn_caption.text = "Round %d of %d" % [event["round"], game.max_rounds()]
 		_sync_opponent_hand()
 		Ui.pop(_turn_label, 1.08)
+
+
+func _animate_check(event: Dictionary) -> void:
+	_last_checkers.assign(event["checkers"])
+	_board.threats.assign(_last_checkers)
+	var king_square: Vector2i = event["king_square"]
+	var king := _board.token(game.piece_at(king_square).uid) if game.piece_at(king_square) != null else null
+	if king != null:
+		king.is_in_check = true
+		_flash_token(king, Palette.OXBLOOD)
+	_board.flash_squares(_last_checkers, Palette.OXBLOOD, 0.5)
+	Ui.float_text(_board, "Check!", _board.square_centre(king_square), Palette.OXBLOOD, 26)
+	if not event["can_escape"]:
+		var who := "You have" if event["side"] == PLAYER else "%s has" % _names[OPPONENT]
+		_show_toast("Check! %s no safe square to escape to" % who, Palette.OXBLOOD)
+	await _wait(0.35)
+
+
+func _on_escape(event: Dictionary) -> void:
+	_sync_penalties()
+	var to := EventText.square_name(event["to"])
+	if event["side"] == PLAYER:
+		_show_toast("You escape to %s: %d less energy next turn" % [to, event["cost"]], Palette.BRASS)
+	else:
+		_show_toast("Check! %s escapes to %s: they'll have %d less energy next turn" % [_names[OPPONENT], to, event["cost"]], Palette.BRASS)
+
+
+## A short message over the top of the board (check answers); replaces the previous one.
+func _show_toast(text: String, color: Color) -> void:
+	if is_instance_valid(_toast):
+		_toast.queue_free()
+	_toast = Ui.panel()
+	_toast.add_theme_stylebox_override("panel", UiTheme.box(Palette.WALNUT_DEEP, color, UiTheme.RADIUS, 10, 1))
+	_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_toast.z_index = 30
+	var text_label := Ui.label(text, "Strong", color)
+	_toast.add_child(text_label)
+	_board.add_child(_toast)
+	_toast.reset_size()
+	# Centred on the board's middle ranks, away from the back ranks where kings stand.
+	_toast.position = ((_board.size - _toast.size) / 2.0).floor()
+	var tween := _toast.create_tween()
+	_toast.modulate.a = 0.0
+	tween.tween_property(_toast, "modulate:a", 1.0, Ui.FAST)
+	tween.tween_interval(2.4)
+	tween.tween_property(_toast, "modulate:a", 0.0, Ui.NORMAL)
+	tween.tween_callback(_toast.queue_free)
 
 
 func _animate_move(event: Dictionary) -> void:

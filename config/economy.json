@@ -5,21 +5,21 @@
   "reward_skip_points": 1,
   "reward_card_pool": ["pawn", "knight", "bishop", "rook", "queen", "move"],
   "starting_collection": ["king", "queen", "rook", "rook", "bishop", "bishop", "knight", "knight",
-                          "pawn", "pawn", "pawn", "pawn", "pawn", "pawn", "pawn", "pawn"],
+						  "pawn", "pawn", "pawn", "pawn", "pawn", "pawn", "pawn", "pawn"],
   "min_deck_size": 4,
   "default_roster": { "pawns": 6 },
   "shop": {
-    "card_offers": 3,
-    "card_prices": { "normal": 2, "rare": 3 },
-    "card_pool": ["pawn", "knight", "bishop", "rook", "queen", "move"],
-    "remove_price": 1,
-    "removes_per_visit": 1,
-    "piece_offers": 2,
-    "piece_pool": ["pawn", "knight", "bishop", "rook", "queen"],
-    "piece_prices": { "pawn": 1, "knight": 2, "bishop": 2, "rook": 3, "queen": 5 }
+	"card_offers": 3,
+	"card_prices": { "normal": 2, "rare": 3 },
+	"card_pool": ["pawn", "knight", "bishop", "rook", "queen", "move"],
+	"remove_price": 1,
+	"removes_per_visit": 1,
+	"piece_offers": 2,
+	"piece_pool": ["pawn", "knight", "bishop", "rook", "queen"],
+	"piece_prices": { "pawn": 1, "knight": 2, "bishop": 2, "rook": 3, "queen": 5 }
   },
   "coaching": {
-    "card_offers": 3,
-    "piece_offers": 3
+	"card_offers": 3,
+	"piece_offers": 3
   }
 }

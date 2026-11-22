@@ -45,6 +45,28 @@ static func redraw_leaves_a_play(energy: int, redraw_cost: int, deck: Array) -> 
 	return cheapest != -1 and energy - redraw_cost >= cheapest
 
 
+static func escape_cost() -> int:
+	return int(GameConfig.value("match", "check_escape_cost"))
+
+
+## Energy `side` will start its next turn with, counting escapes made so far plus
+## `extra_escapes` more (D59).
+static func next_turn_energy(game: ChessMatch, side: int, extra_escapes: int = 0) -> int:
+	return maxi(game.max_energy(side) - game.escape_penalty(side) - extra_escapes * escape_cost(), 0)
+
+
+## The pending escape's destinations split into plain moves and captures.
+static func escape_targets(game: ChessMatch) -> Dictionary:
+	var moves: Array[Vector2i] = []
+	var captures: Array[Vector2i] = []
+	for square in game.escape_squares():
+		if game.piece_at(square) != null:
+			captures.append(square)
+		else:
+			moves.append(square)
+	return {"moves": moves, "captures": captures}
+
+
 ## Why a card can't be played right now ("" if it can).
 static func unplayable_reason(game: ChessMatch, card_index: int) -> String:
 	if game.is_card_playable(card_index):

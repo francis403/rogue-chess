@@ -49,6 +49,17 @@ static func describe(event: Dictionary, names: Array) -> String:
 			return "%s redrew the hand" % who
 		"shuffle":
 			return "%s shuffled %d cards into the draw pile" % [who, event["count"]]
+		"check":
+			var line := "Check! %s king on %s is attacked" % ["Your" if event["side"] == 0 else "%s's" % who, square_name(event["king_square"])]
+			return line if event["can_escape"] else line + " (no escape)"
+		"escape":
+			return "%s escaped %s → %s (−%d energy next turn)" % [who, square_name(event["from"]), square_name(event["to"]), event["cost"]]
+		"escape_declined":
+			return "%s stayed in check" % who
+		"energy":
+			if int(event.get("escape_penalty", 0)) > 0:
+				return "%s starts with %d energy (−%d from escapes)" % [who, event["energy"], event["escape_penalty"]]
+			return ""
 		"match_over":
 			return "Match over — you win" if int(event["winner"]) == 0 else "Match over — %s wins" % names[1]
 	return ""
