@@ -380,7 +380,11 @@ func _capture_loss(captured: MatchPiece, points: int) -> float:
 	return loss if captured.side == side else -loss
 
 
+## D27: the capturer's Trophy Case and the victim owner's Trophy Case each add their amount.
 func _trophy_bonus(game: ChessMatch, credited: int) -> int:
-	if not game.artifacts(credited).has("capture_bonus"):
-		return 0
-	return int(GameConfig.data("artifacts")["artifacts"]["capture_bonus"]["amount"])
+	var amount := int(GameConfig.data("artifacts")["artifacts"]["capture_bonus"]["amount"])
+	var bonus := 0
+	for owner in [credited, 1 - credited]:
+		if game.artifacts(owner).has("capture_bonus"):
+			bonus += amount
+	return bonus

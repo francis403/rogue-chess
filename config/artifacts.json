@@ -3,7 +3,7 @@
   "max_starting_artifacts": 2,
   "artifacts": {
     "extra_energy":  { "name": "Espresso",       "desc": "+1 energy every turn.", "amount": 1 },
-    "capture_bonus": { "name": "Trophy Case",    "desc": "Pieces you capture are worth +1 point.", "amount": 1 },
+    "capture_bonus": { "name": "Trophy Case",    "desc": "Pieces you capture are worth +1 point. Your own pieces are worth +1 points too.", "amount": 1 },
     "holes":         { "name": "Sinkholes",      "desc": "2-4 holes appear in the middle rows. Only knights can jump over them.", "min": 2, "max": 4 },
     "exploding":     { "name": "Powder Keg",     "desc": "Pieces you capture explode, also capturing every adjacent piece (yours too). No chain reactions." }
   }

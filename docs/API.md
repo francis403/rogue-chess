@@ -101,8 +101,8 @@ Every event has `"type"`; most have `"side"` (the side it concerns). `uid` is th
 
 - A Fire piece whose attack is blocked by a Shield did not move, so it does **not** ignite.
 - Fire's +2 applies only to the piece the Fire piece captures directly, not to pieces caught in its explosion.
-- Burn-out is not a capture attempt: it ignores Shields and does not trigger Powder Keg. It does get the opponent's Trophy Case +1 (D27).
-- Trophy Case +1 also applies to 0-value pieces (king, Fire pawn).
+- Burn-out is not a capture attempt: it ignores Shields and does not trigger Powder Keg. It does get the Trophy Case +1 from either side's Trophy Case (D27).
+- Trophy Case: +1 per capture for each Trophy Case held by the capturer or the victim's owner (so +2 when both have it). Also applies to 0-value pieces (king, Fire pawn).
 - Promoted pawns keep their piece set (a Fire pawn becomes a Fire queen worth 7) and their burn timer.
 - Turn limit and round counting follow the side that moves first.
 
@@ -125,10 +125,10 @@ var next_run := RunSession.new(new_seed, meta, logger)   # one RunSession per ru
 ```
 SET_SELECT -> ARTIFACT_SELECT (skipped when no artifact is unlocked, D40) -> MAP
 MAP -> choose_node(): match/boss node -> MATCH_SETUP -> MATCH -> REWARD -> MAP
-                      shop node       -> SHOP     -> MAP
-                      coaching node   -> COACHING -> MAP
+					  shop node       -> SHOP     -> MAP
+					  coaching node   -> COACHING -> MAP
 finish_match(): loss (any node)  -> RUN_END (+1 random artifact unlocked, D37)
-                boss win         -> RUN_END (Fire unlocked)
+				boss win         -> RUN_END (Fire unlocked)
 ```
 
 `run.phase` (enum), `run.phase_name()` ("MAP", ...), `run.is_over()` (phase == RUN_END).
@@ -237,9 +237,9 @@ Only `winner` is required. Effects: pieces in `shields_consumed` that still have
 ```
 {"seed", "started_at", "finished_at", "piece_set", "artifacts",
  "matches": [{"node", "floor", "opponent", "result": "win"|"loss", "reason", "scores",
-              "deck": [card dicts at the win/loss], "roster": [piece dicts + "square": [x, y]],
-              "pieces_used": [roster piece dicts, pre-match upgrades], "pieces_moved": [roster piece dicts, pre-match upgrades],
-              "shields_consumed": [uids], "points_after"}],
+			  "deck": [card dicts at the win/loss], "roster": [piece dicts + "square": [x, y]],
+			  "pieces_used": [roster piece dicts, pre-match upgrades], "pieces_moved": [roster piece dicts, pre-match upgrades],
+			  "shields_consumed": [uids], "points_after"}],
  "events": [{"kind": "reward"|"reward_skip"|"purchase_card"|"purchase_piece"|"remove_card"|"upgrade", "node", "card"|"piece", "price"|"points"}],
  "summary": RunSession.summary()}
 ```
@@ -252,8 +252,8 @@ Only `winner` is required. Effects: pieces in `shields_consumed` that still have
 ```gdscript
 var ai := MatchAI.new(ChessMatch.OPPONENT, setup["opponent"]["search_depth"], setup["opponent"]["random_chance"], rng, setup["opponent"]["deck"])
 while not game.is_over() and game.current_side() == ChessMatch.OPPONENT:
-    var action := ai.choose_action(game)        # decide (a few ms)
-    var events := MatchAI.apply_action(game, action)   # perform it; animate the events
+	var action := ai.choose_action(game)        # decide (a few ms)
+	var events := MatchAI.apply_action(game, action)   # perform it; animate the events
 ```
 
 | call | returns |

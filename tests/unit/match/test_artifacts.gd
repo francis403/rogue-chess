@@ -31,7 +31,7 @@ func test_extra_energy_gives_one_more_energy_every_turn() -> void:
 	assert_eq(game.energy(P), expected)
 
 
-func test_capture_bonus_only_for_the_owner() -> void:
+func test_capture_bonus_for_owner_captures_and_owner_losses() -> void:
 	var game := H.make([H.piece("king", Vector2i(5, 0)), H.piece("rook", Vector2i(0, 0)), H.piece("pawn", Vector2i(3, 1))],
 		[H.piece("king", Vector2i(5, 5)), H.piece("pawn", Vector2i(0, 4)), H.piece("bishop", Vector2i(1, 3))], H.FIVE_MOVES, H.FIVE_MOVES,
 		{"player_artifacts": ["capture_bonus"]})
@@ -39,7 +39,7 @@ func test_capture_bonus_only_for_the_owner() -> void:
 	assert_eq(game.score(P), 2, "pawn 1 + trophy 1")
 	game.end_turn()
 	game.play(0, Vector2i(1, 3), Vector2i(3, 1))
-	assert_eq(game.score(O), 1, "no bonus for the opponent")
+	assert_eq(game.score(O), 2, "owner's pawn 1 + trophy 1")
 
 
 func test_capture_bonus_applies_to_explosion_credits() -> void:
@@ -48,6 +48,14 @@ func test_capture_bonus_applies_to_explosion_credits() -> void:
 		{"player_artifacts": ["capture_bonus", "exploding"]})
 	game.play(0, Vector2i(0, 0), Vector2i(0, 4))
 	assert_eq(game.score(P), 4, "(1 + 1) + exploded (1 + 1)")
+
+
+func test_capture_bonus_stacks_when_both_sides_own_it() -> void:
+	var game := H.make([H.piece("king", Vector2i(5, 0)), H.piece("rook", Vector2i(0, 0))],
+		[H.piece("king", Vector2i(5, 5)), H.piece("pawn", Vector2i(0, 4))], H.FIVE_MOVES, H.FIVE_MOVES,
+		{"player_artifacts": ["capture_bonus"], "opponent_artifacts": ["capture_bonus"]})
+	game.play(0, Vector2i(0, 0), Vector2i(0, 4))
+	assert_eq(game.score(P), 3, "pawn 1 + own trophy 1 + victim's trophy 1")
 
 
 func test_no_holes_without_the_artifact() -> void:

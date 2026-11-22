@@ -386,10 +386,11 @@ func _card_can_move(card: CardData, piece: MatchPiece) -> bool:
 	return _card_fits(card, piece) and card.cost() <= _sides[piece.side].energy
 
 
-## Scores a removed piece for `credited_side` (+ Trophy Case, D27) and records it.
+## Scores a removed piece for `credited_side` (+ both sides' Trophy Case, D27) and records it.
 ## cause: "capture", "explosion" or "burn_out" (the latter emits a burn_out event).
 func _credit_capture(victim: MatchPiece, credited_side: int, extra_points: int, cause: String, events: Array[Dictionary]) -> void:
-	var points := victim.value() + extra_points + _sides[credited_side].artifact_amount("capture_bonus")
+	var trophy := _sides[credited_side].artifact_amount("capture_bonus") + _sides[victim.side].artifact_amount("capture_bonus")
+	var points := victim.value() + extra_points + trophy
 	_sides[credited_side].score += points
 	if victim.type == "king":
 		_kings_captured[victim.side] = true

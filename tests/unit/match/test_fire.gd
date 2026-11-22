@@ -102,6 +102,15 @@ func test_burn_out_gives_opponent_its_trophy_bonus() -> void:
 	assert_eq(game.score(O), 1, "fire pawn 0 + trophy 1")
 
 
+func test_burn_out_of_trophy_owner_piece_gives_opponent_the_bonus() -> void:
+	var game := _fire_game([H.piece("pawn", Vector2i(0, 1), FIRE)], [], {"player_artifacts": ["capture_bonus"]})
+	game.play(0, Vector2i(0, 1), Vector2i(0, 2))
+	for _i in _burn_turns() * 2 - 1:
+		game.end_turn()
+	assert_null(game.piece_at(Vector2i(0, 2)))
+	assert_eq(game.score(O), 1, "fire pawn 0 + owner's trophy 1")
+
+
 func test_burn_out_can_reach_the_target_score() -> void:
 	var game := _fire_game([H.piece("queen", Vector2i(0, 0), FIRE), H.piece("rook", Vector2i(2, 1), FIRE)], [H.piece("rook", Vector2i(2, 5))])
 	game.play(0, Vector2i(0, 0), Vector2i(0, 2))

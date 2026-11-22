@@ -42,7 +42,7 @@ Rule of thumb: the simplest choice that keeps the game fun, with the number in `
 
 ## Artifacts
 - D26. Artifact list and unlock pool live in `artifacts.json`. Player picks **up to 2** (`max_starting_artifacts`) of the unlocked ones at run start, or none.
-- D27. "Captured pieces worth +1 (only for the owner)": every piece credited to the owner as a capture (normal, explosion or burn-out) gives the owner +1. The opponent gets no bonus for capturing the owner's pieces.
+- D27. "Captured pieces worth +1, own pieces too": every piece credited to the owner as a capture (normal, explosion or burn-out) gives the owner +1, and every owner's piece credited to the opponent (normal, explosion or burn-out) gives the opponent +1. If both sides have Trophy Case, each capture gets +2.
 - D28. Holes: if either side has the artifact, 2–4 holes (uniform) are placed on empty squares of ranks 2–3 at match start.
 - D29. Exploding: when the **owner** captures a piece, the 8 squares around the captured piece's square explode; every piece there (both sides, never the attacker who now stands on the centre square) is captured, no chain reactions. Each exploded piece scores for its owner's opponent. A shielded piece in the blast loses its shield instead.
 - D30. Boss gets `artifact_count` = 2 distinct random artifacts from the full pool; Easy and Medium get none. (Tuned from 1 → 2 after the 100-run sim showed the boss easier than Medium: player beat it 80% vs Medium 53%; with 2 it is ~38%.)
@@ -66,7 +66,7 @@ Rule of thumb: the simplest choice that keeps the game fun, with the number in `
 ## Resolved during implementation (M1)
 - D43. A Fire piece whose attack is blocked by a Shield did not move, so it does not ignite.
 - D44. Fire's +2 applies only to the piece a Fire piece captures directly, not to explosion victims.
-- D45. A burn-out is not a capture attempt: it ignores Shields and does not trigger Powder Keg, but it does give the opponent's Trophy Case +1.
+- D45. A burn-out is not a capture attempt: it ignores Shields and does not trigger Powder Keg, but it does get the Trophy Case +1 (D27) for either side's Trophy Case.
 - D46. Trophy Case +1 also applies to 0-value captures (king, Fire pawns).
 - D47. A promoted pawn keeps its set and burn timer (a Fire pawn becomes a Fire queen worth 7).
 - D48. Match result lists every deployed player piece (`player_pieces_used`) and, separately, the ones that moved (`player_pieces_moved`); logs record both.
