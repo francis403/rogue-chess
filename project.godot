@@ -17,13 +17,15 @@ config/icon="res://icon.svg"
 
 [autoload]
 
+Settings="*res://scripts/ui/settings.gd"
+Sfx="*res://scripts/ui/audio/sfx.gd"
 Game="*res://scripts/ui/game.gd"
 
 [display]
 
 window/size/viewport_width=1280
 window/size/viewport_height=720
-
+window/size/mode=3
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 

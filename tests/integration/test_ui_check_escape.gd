@@ -1,6 +1,8 @@
 extends GutTest
 ## Check escape through the real match screen (D56-D62): the opponent answers the
 ## player's check on its own; the player's prompt only accepts escape squares, Stay and Esc.
+## Runs at the "normal" animation speed (the other UI tests use "fast"), so the real
+## timings of moves, check pulses, banners and the AI pause are covered.
 
 const UiDriver := preload("res://tests/integration/ui_helpers/ui_driver.gd")
 const P := ChessMatch.PLAYER
@@ -29,7 +31,8 @@ class ScriptedAI extends MatchAI:
 
 func before_each() -> void:
 	ui = UiDriver.new(self, "check_escape")
-	await ui.start()
+	await ui.start([], [], "normal")
+	assert_eq(Settings.anim_scale(), 1.0, "normal speed")
 	Game.new_run(3)
 	Game.run.choose_piece_set("standard")
 
@@ -78,8 +81,17 @@ func test_escape_prompt_accepts_only_escape_squares() -> void:
 	await ui.frames(2)
 	assert_eq(game.pending_escape_side(), P, "Esc, right-click and stray clicks keep the prompt")
 	assert_eq(game.piece_at(king).type, "king")
+	var keys_line: Label = ui.screen()._view.escape_keys_label
+	if squares.size() == 1:
+		assert_string_contains(keys_line.text, "Y / Enter escape to %s" % EventText.square_name(squares[0]))
+	else:
+		assert_string_contains(keys_line.text, "Click a square", "Y / Enter only when there is one square")
 	ui.click_square(squares[0])
 	ui.click_square(squares[0])  # double click: one escape only
+	await ui.frames(3)
+	assert_true(ui.screen().is_busy(), "the escape is still playing out")
+	assert_eq(board.threats, [] as Array[Vector2i], "the checker's marks go the moment the king escapes")
+	assert_false(board.token(game.piece_at(squares[0]).uid).is_in_check, "and so does the king's CHECK tag")
 	assert_true(await ui.wait_player_turn())
 	assert_eq(game.escape_penalty(P), 0, "the penalty was spent at the player's turn start")
 	assert_eq(game.energy(P), game.max_energy(P) - 1, "the escape cost 1 energy of this turn")
@@ -98,6 +110,46 @@ func test_stay_declines_the_escape() -> void:
 	assert_true(_log_has("You stayed in check"))
 	var king_token := ui.board().token(game.piece_at(Vector2i(2, 0)).uid)
 	assert_eq(king_token.is_in_check, game.in_check(P), "the king token shows the check")
+
+
+## The prompt replaces the hint in place: the screen never grows past the window,
+## so the board keeps its size and position.
+func test_escape_prompt_does_not_move_the_board() -> void:
+	assert_true(await ui.show_crafted_match([["king", 2, 0], ["pawn", 5, 1]], [["king", 5, 5], ["rook", 3, 5]],
+		["move", "move", "move", "move", "move"], ["rook", "rook", "rook", "rook", "rook"]))
+	var board_before := ui.board().get_global_rect()
+	var scripted := ScriptedAI.new(O, 1, 0.0, RandomNumberGenerator.new())
+	scripted.rook_move = [Vector2i(3, 5), Vector2i(2, 5)]
+	ui.screen()._ai = scripted
+	assert_true(ui.press(ui.button("End turn", ui.screen())))
+	assert_true(await ui.wait_match_idle())
+	assert_true(ui.escape_prompt_up())
+	await ui.frames(2)
+	assert_eq(ui.board().get_global_rect(), board_before, "the board neither moves nor resizes")
+	assert_lte(ui.screen().get_combined_minimum_size().y, ui.screen().size.y, "the layout fits the screen")
+
+
+## The opponent's played card is revealed only once the turn banner has gone.
+## (Its place left of the rank numbers is checked in the screenshots: the
+## headless window is square, so there is no room beside the board here.)
+func test_opponent_card_waits_for_the_turn_banner() -> void:
+	assert_true(await ui.show_crafted_match([["king", 2, 0], ["pawn", 5, 1]], [["king", 5, 5], ["rook", 3, 5]],
+		["move", "move", "move", "move", "move"], ["rook", "rook", "rook", "rook", "rook"]))
+	var scripted := ScriptedAI.new(O, 1, 0.0, RandomNumberGenerator.new())
+	scripted.rook_move = [Vector2i(3, 5), Vector2i(2, 5)]
+	ui.screen()._ai = scripted
+	var board := ui.board()
+	assert_true(ui.press(ui.button("End turn", ui.screen())))
+	assert_true(await ui.until(func() -> bool: return _revealed_card(board) != null), "the opponent's card is revealed")
+	assert_eq(ui.screen()._fx.banner_time_left(), 0.0, "the turn banner was gone before the reveal")
+	assert_true(await ui.wait_match_idle())
+
+
+func _revealed_card(board: BoardView) -> CardView:
+	for child in board.get_children():
+		if child is CardView and not child.is_back:
+			return child
+	return null
 
 
 ## The player ends the turn; the scripted opponent rook moves onto the king's file.

@@ -1,9 +1,6 @@
 class_name Ui
 extends RefCounted
-## Small builders and feedback tweens shared by every screen.
-
-const FAST := 0.15
-const NORMAL := 0.25
+## Small builders shared by every screen (feedback tweens are in Feel).
 
 
 static func label(text: String, variation: String = "", color: Variant = null) -> Label:
@@ -89,49 +86,6 @@ static func clear(node: Node) -> void:
 		child.queue_free()
 
 
-## A short scale bump: "this changed".
-static func pop(node: CanvasItem, amount: float = 1.12) -> void:
-	if not is_instance_valid(node):
-		return
-	if node is Control:
-		node.pivot_offset = node.size / 2.0
-	var tween := node.create_tween()
-	tween.tween_property(node, "scale", Vector2.ONE * amount, FAST * 0.6).set_ease(Tween.EASE_OUT)
-	tween.tween_property(node, "scale", Vector2.ONE, FAST).set_ease(Tween.EASE_IN_OUT)
-
-
-## A small horizontal shake: "not allowed".
-static func shake(node: Control) -> void:
-	if not is_instance_valid(node):
-		return
-	var origin := node.position
-	var tween := node.create_tween()
-	for offset in [6.0, -5.0, 3.0, 0.0]:
-		tween.tween_property(node, "position:x", origin.x + offset, 0.04)
-
-
-static func fade_in(node: CanvasItem, duration: float = NORMAL) -> void:
-	node.modulate.a = 0.0
-	node.create_tween().tween_property(node, "modulate:a", 1.0, duration).set_ease(Tween.EASE_OUT)
-
-
-## Text that rises and fades from `at` (local to `parent`).
-static func float_text(parent: Control, text: String, at: Vector2, color: Color, size: int = 22) -> void:
-	var node := label(text, "H2", color)
-	node.add_theme_font_size_override("font_size", size)
-	node.add_theme_color_override("font_outline_color", Palette.WALNUT_DEEP)
-	node.add_theme_constant_override("outline_size", 6)
-	node.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	node.z_index = 20
-	parent.add_child(node)
-	node.reset_size()
-	node.position = at - node.size / 2.0
-	var tween := node.create_tween().set_parallel()
-	tween.tween_property(node, "position:y", node.position.y - 36.0, 0.9).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
-	tween.tween_property(node, "modulate:a", 0.0, 0.35).set_delay(0.55)
-	tween.chain().tween_callback(node.queue_free)
-
-
 ## True if this opponent is the one on the map's boss node (config/map.json).
 static func is_boss(opponent_id: String) -> bool:
 	for map_node: Dictionary in GameConfig.data("map")["nodes"].values():
@@ -171,7 +125,7 @@ static func piece_set_name(set_id: String) -> String:
 static func artifact_chips(artifact_ids: Array, empty_text: String = "No artifacts") -> HBoxContainer:
 	var row := hbox(4)
 	if artifact_ids.is_empty():
-		row.add_child(label(empty_text, "Caption", Palette.IVORY_MUTED))
+		row.add_child(label(empty_text, "Caption", Palette.IVORY_FAINT))
 	for artifact_id: String in artifact_ids:
 		row.add_child(chip(artifact_name(artifact_id), Palette.BRASS, artifact_desc(artifact_id)))
 	return row
@@ -200,27 +154,100 @@ static func frame(screen: Control, eyebrow: String, title: String, subtitle: Str
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "right"]:
-		margin.add_theme_constant_override("margin_" + side, 48)
-	for side in ["top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 28)
+		margin.add_theme_constant_override("margin_" + side, Metrics.SCREEN_X)
+	centre_tall(margin)
 	screen.add_child(margin)
-	var column := vbox(24)
+	var column := vbox(Metrics.XL)
 	margin.add_child(column)
-	var header := vbox(4)
+	var header := vbox(Metrics.XS)
 	header.add_child(label(eyebrow.to_upper(), "Eyebrow"))
 	header.add_child(label(title, "H1"))
 	if subtitle != "":
 		header.add_child(label(subtitle, "Body"))
 	column.add_child(header)
-	var body := vbox(16)
+	var body := vbox(Metrics.L)
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	column.add_child(body)
 	return body
 
 
+## Top and bottom margins of a screen: Metrics.SCREEN_Y, plus half of whatever the
+## canvas is taller than the 720 base (16:10 windows), so menu screens keep their
+## 16:9 layout centred instead of leaving a band of empty space at the bottom.
+static func centre_tall(margin: MarginContainer) -> void:
+	var fit := func() -> void:
+		var extra := maxi(int(margin.get_viewport_rect().size.y) - Metrics.BASE_HEIGHT, 0) / 2
+		for side in ["top", "bottom"]:
+			margin.add_theme_constant_override("margin_" + side, Metrics.SCREEN_Y + extra)
+	for side in ["top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, Metrics.SCREEN_Y)
+	margin.resized.connect(fit)
+
+
+## A fixed vertical gap (spacing scale only).
+static func gap(height: int = Metrics.L) -> Control:
+	var node := Control.new()
+	node.custom_minimum_size.y = height
+	node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return node
+
+
+## A thin horizontal rule that fills its row.
+static func rule(color: Color = Palette.RULE) -> ColorRect:
+	var node := ColorRect.new()
+	node.color = color
+	node.custom_minimum_size.y = 1
+	node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	node.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return node
+
+
+## A block centred vertically in a frame body (equal space above and below), so
+## menu content sits in the middle of the screen with its actions right under it.
+## Add rows with SIZE_SHRINK_CENTER (or Ui.centered) to centre them horizontally.
+static func centre_block(body: VBoxContainer, separation: int = Metrics.XL) -> VBoxContainer:
+	body.add_child(spacer())
+	var block := vbox(separation)
+	block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_child(block)
+	body.add_child(spacer())
+	return block
+
+
+## A centred row of actions (status or counter text and buttons) under content.
+static func actions(block: VBoxContainer) -> HBoxContainer:
+	var row := hbox(Metrics.M)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	block.add_child(row)
+	return row
+
+
+## A keyboard key cap ("1", "Enter"): dark inset face, light rim, lining figures.
+## Drawn like the map's and the hand's caps so a key always looks like a key.
+static func key_cap(text: String) -> PanelContainer:
+	var cap := PanelContainer.new()
+	var style := UiTheme.box(Palette.WALNUT_INSET, Palette.IVORY_FAINT, 3, 0)
+	style.content_margin_left = Metrics.XS + 2
+	style.content_margin_right = Metrics.XS + 2
+	style.content_margin_top = 1
+	style.content_margin_bottom = 1
+	cap.add_theme_stylebox_override("panel", style)
+	cap.custom_minimum_size = Vector2(Metrics.KEY_CAP, Metrics.KEY_CAP)
+	cap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cap.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var text_label := label(text, "Caption", Palette.IVORY)
+	text_label.add_theme_font_override("font", UiFonts.numbers())
+	text_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	text_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	cap.add_child(text_label)
+	return cap
+
+
 ## A right-aligned row of buttons at the bottom of a frame body.
 static func footer(body: VBoxContainer) -> HBoxContainer:
-	var row := hbox(8)
+	var row := hbox(Metrics.S)
+	row.alignment = BoxContainer.ALIGNMENT_END
 	row.add_child(spacer())
 	body.add_child(row)
 	return row
@@ -228,12 +255,7 @@ static func footer(body: VBoxContainer) -> HBoxContainer:
 
 ## A short status line for refusals ("Not enough points ...").
 static func status_label() -> Label:
-	var node := label("", "Body", Palette.OXBLOOD)
-	node.custom_minimum_size.y = 20
+	var node := label("", "Body", Palette.OXBLOOD_INK)
+	node.custom_minimum_size.y = Metrics.L + Metrics.XS
 	return node
 
-
-static func flash_status(node: Label, text: String, color: Color = Palette.OXBLOOD) -> void:
-	node.text = text
-	node.add_theme_color_override("font_color", color)
-	shake(node)

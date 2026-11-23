@@ -4,6 +4,8 @@ extends Node
 
 signal screen_requested(screen_name: String)
 signal run_changed
+## Asks the main scene to open the settings overlay (title screen, HUD).
+signal settings_requested
 
 const TITLE := "TITLE"
 
@@ -36,13 +38,28 @@ func new_run(seed_value: int = 0) -> void:
 	show_phase()
 
 
+## Back to the title. The title never shows a run, and New Game starts a fresh
+## one, so the current run (finished or not) is let go here.
 func show_title() -> void:
+	run = null
+	match_setup = {}
 	screen_requested.emit(TITLE)
+
+
+## Leaves the current run without finishing it (settings panel, after a confirm).
+## RunSession has no abandon action: the run is simply dropped, nothing is logged
+## or unlocked, and the title starts the next one.
+func abandon_run() -> void:
+	show_title()
 
 
 func show_phase() -> void:
 	run_changed.emit()
 	screen_requested.emit(run.phase_name())
+
+
+func open_settings() -> void:
+	settings_requested.emit()
 
 
 func notify_changed() -> void:

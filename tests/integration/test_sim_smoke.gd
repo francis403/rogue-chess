@@ -3,13 +3,17 @@ extends GutTest
 
 const SimDriver := preload("res://tools/sim/sim_driver.gd")
 const H := preload("res://tests/unit/match/match_helper.gd")
-const SMOKE_DIR := "user://sim/smoke/"
 const SMOKE_RUNS := 5
 const REAL_META_PATH := "user://meta.json"
+
+## This process's own folder (SimDriver writes only under user://sim/), so parallel
+## GUT runs never wipe each other's sim logs.
+var SMOKE_DIR := "user://sim/smoke_p%d/" % OS.get_process_id()
 
 
 func after_all() -> void:
 	SimDriver.remove_dir(SMOKE_DIR)
+	DirAccess.remove_absolute("user://sim/")  # only once empty
 
 
 func test_sim_runs_finish_without_failures() -> void:

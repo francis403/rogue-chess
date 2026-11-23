@@ -1,6 +1,12 @@
 extends Control
 ## Match setup: pick pieces within the budget and place them on your two back ranks.
 ## All validity comes from RunSession.validate_roster().
+## Sound: picking a piece up (piece_pickup), setting it down (piece_land_* by weight),
+## benching (ui_cancel), Auto (card_shuffle). Keyboard: Tab / arrows move through
+## the collection; Enter on a benched piece (or the king) picks it up and puts a
+## dashed square cursor on the board (SquareCursor, drawn above the BoardView):
+## arrows walk the deploy squares, Enter sets the piece down, Esc puts it back.
+## Enter on a placed piece benches it; Esc drops the current selection.
 
 var _roster: Array[Dictionary] = []
 var _selected: PieceData
@@ -13,6 +19,14 @@ var _start: Button
 var _opponent: Dictionary
 var _opponent_id: String = ""
 var _is_starting: bool = false
+var _cursor: SquareCursor
+var _list_fade: TextureRect
+var _list_scroll: ScrollContainer
+
+const OPPONENT_CARD := Vector2(56, 78)
+## Height of the "more below" fade at the bottom of the collection list.
+const LIST_FADE := 40
+const KING_HINT := "★ marks your king: it costs nothing, always plays and can't be benched. Click it on the board, then a square, to move it."
 
 
 func _ready() -> void:
@@ -30,11 +44,16 @@ func _ready() -> void:
 	row.add_child(_opponent_panel())
 	_roster = run.default_roster()
 	_refresh()
+	A11y.focus_all(self)
+	A11y.focus_first([_start])
 
 
+## Esc drops the selection; with nothing selected it falls through (main opens settings).
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("ui_cancel"):
+	if event.is_action_pressed("ui_cancel") and _selected != null:
+		get_viewport().set_input_as_handled()
 		_selected = null
+		Sfx.play("ui_cancel")
 		_refresh()
 
 
@@ -44,14 +63,71 @@ func _collection_panel() -> PanelContainer:
 	var column := Ui.vbox(12)
 	panel.add_child(column)
 	column.add_child(Ui.label("COLLECTION", "Eyebrow"))
+	column.add_child(_king_legend())
+	# The list scrolls; a fade at its bottom edge says "more below" instead of a
+	# row cut in half (it hides once the end is in view).
+	var holder := Control.new()
+	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	holder.clip_contents = true
 	var scroll := ScrollContainer.new()
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_list_scroll = scroll
+	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_list = Ui.vbox(6)
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_list)
-	column.add_child(scroll)
+	# Room for the keyboard focus ring, which is drawn outside each row (the scroll clips).
+	var ring_room := MarginContainer.new()
+	ring_room.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for side in ["left", "right", "top", "bottom"]:
+		ring_room.add_theme_constant_override("margin_" + side, Metrics.XS + 2)
+	ring_room.add_child(_list)
+	scroll.add_child(ring_room)
+	holder.add_child(scroll)
+	_list_fade = TextureRect.new()
+	_list_fade.texture = _fade_texture()
+	_list_fade.stretch_mode = TextureRect.STRETCH_SCALE
+	_list_fade.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_list_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_list_fade.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	_list_fade.offset_top = -LIST_FADE
+	_list_fade.offset_right = -Metrics.M  # keep the scroll bar visible
+	holder.add_child(_list_fade)
+	scroll.get_v_scroll_bar().changed.connect(_update_fade)
+	scroll.get_v_scroll_bar().value_changed.connect(func(_value: float) -> void: _update_fade())
+	column.add_child(holder)
 	return panel
+
+
+## Transparent at the top, the panel's own colour at the bottom.
+static func _fade_texture() -> GradientTexture2D:
+	var gradient := Gradient.new()
+	gradient.set_color(0, Color(Palette.WALNUT_RAISED, 0.0))
+	gradient.set_color(1, Palette.WALNUT_RAISED)
+	var texture := GradientTexture2D.new()
+	texture.gradient = gradient
+	texture.fill_from = Vector2(0, 0)
+	texture.fill_to = Vector2(0, 1)
+	texture.width = 4
+	texture.height = 32
+	return texture
+
+
+func _update_fade() -> void:
+	var bar := _list_scroll.get_v_scroll_bar()
+	_list_fade.visible = bar.value + bar.page < bar.max_value - 1.0
+
+
+## Explains the star badge on the king and the dimmed tokens of placed pieces.
+func _king_legend() -> HBoxContainer:
+	var line := Ui.hbox(Metrics.S)
+	line.tooltip_text = KING_HINT
+	line.mouse_filter = Control.MOUSE_FILTER_PASS
+	var star := Ui.label("★", "Strong", Palette.IVORY_FAINT)
+	star.add_theme_font_override("font", UiFonts.symbols())
+	star.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	line.add_child(star)
+	line.add_child(Ui.wrapped("Your king: free and always plays. A dimmed token is already on the board.", "Caption", 210))
+	return line
 
 
 func _board_column() -> VBoxContainer:
@@ -76,6 +152,12 @@ func _board_column() -> VBoxContainer:
 	_board.square_clicked.connect(_on_square_clicked)
 	_board.piece_dropped.connect(_on_dropped)
 	column.add_child(_board)
+	_cursor = SquareCursor.new()
+	_cursor.board = _board
+	_cursor.rows = _deploy_rows()
+	_cursor.confirmed.connect(_on_cursor_confirmed)
+	_cursor.cancelled.connect(_on_cursor_cancelled)
+	_board.add_child(_cursor)
 	_message = Ui.label("", "Body")
 	_message.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	column.add_child(_message)
@@ -83,15 +165,20 @@ func _board_column() -> VBoxContainer:
 	buttons.alignment = BoxContainer.ALIGNMENT_CENTER
 	var auto := Ui.button("Auto")
 	auto.tooltip_text = "Fill a sensible default roster"
+	auto.set_meta("sfx", "card_shuffle")
 	auto.pressed.connect(func() -> void:
 		_roster = Game.run.default_roster()
 		_selected = null
 		_refresh())
 	buttons.add_child(auto)
 	var clear := Ui.button("Bench all")
+	clear.tooltip_text = "Take every piece but the king off the board"
+	clear.set_meta("sfx", "ui_cancel")
 	clear.pressed.connect(_bench_all)
 	buttons.add_child(clear)
 	_start = Ui.button("Start match", "PrimaryButton")
+	_start.set_meta("sfx", "none")
+	_start.tooltip_text = "Start the match with the pieces on the board"
 	_start.custom_minimum_size.x = 180
 	_start.pressed.connect(_start_match)
 	buttons.add_child(_start)
@@ -106,7 +193,7 @@ func _opponent_panel() -> PanelContainer:
 	panel.add_child(column)
 	column.add_child(Ui.label("YOUR OPPONENT", "Eyebrow"))
 	column.add_child(Ui.label(_opponent["name"], "H2"))
-	var difficulty_color := Palette.OXBLOOD if Ui.is_boss(_opponent_id) else Palette.IVORY_SOFT
+	var difficulty_color := Palette.OXBLOOD_INK if Ui.is_boss(_opponent_id) else Palette.IVORY_SOFT
 	var tags := Ui.hbox(4)
 	tags.add_child(Ui.chip(_opponent["difficulty"], difficulty_color))
 	tags.add_child(Ui.chip("Looks %d ahead" % int(_opponent["search_depth"]), Palette.IVORY_SOFT, "Search depth of the opponent's move planning"))
@@ -117,23 +204,41 @@ func _opponent_panel() -> PanelContainer:
 	pieces.add_theme_constant_override("v_separation", 4)
 	var worth := 0
 	for entry in _opponent["pieces"]:
-		pieces.add_child(PieceToken.create(30, PieceData.new(entry["type"]), 1))
+		var token := PieceToken.create(30, PieceData.new(entry["type"]), 1)
+		pieces.add_child(token)
+		token.mouse_filter = Control.MOUSE_FILTER_PASS  # after _ready, so the tooltip shows
 		worth += GameConfig.piece_value(entry["type"])
 	column.add_child(pieces)
-	column.add_child(Ui.label("%d points of material on the board" % worth, "Caption"))
+	var material := Ui.label("%d points of material on the board" % worth, "Caption")
+	material.tooltip_text = "Capturing a piece scores its value; first to %d points (or to take the king) wins" % int(GameConfig.value("match", "target_score"))
+	material.mouse_filter = Control.MOUSE_FILTER_PASS
+	column.add_child(material)
 	column.add_child(Ui.label("DECK", "Eyebrow"))
-	var deck_names: Array[String] = []
+	var deck := HFlowContainer.new()
+	deck.add_theme_constant_override("h_separation", Metrics.XS + 2)
+	deck.add_theme_constant_override("v_separation", Metrics.XS + 2)
 	for card_type: String in _opponent["deck"]:
-		deck_names.append(GameConfig.data("cards")[card_type]["name"])
-	column.add_child(Ui.wrapped(", ".join(deck_names), "Body", 240))
+		var view := CardView.create(CardData.new(card_type), OPPONENT_CARD)
+		view.is_interactive = false
+		view.is_inspectable = true
+		deck.add_child(view)
+	column.add_child(deck)
 	column.add_child(Ui.label("ARTIFACTS", "Eyebrow"))
 	var count := int(_opponent["artifact_count"])
 	var artifact_text := "None" if count == 0 else "%d random artifact%s, revealed when the match starts" % [count, "" if count == 1 else "s"]
 	column.add_child(Ui.wrapped(artifact_text, "Body" if count == 0 else "Strong", 240))
+	# The stakes close the column at the bottom (like the map's legend), so it
+	# ends on something you need instead of empty space.
+	column.add_child(Ui.spacer())
+	var stakes := Ui.wrapped("To win: reach %d points first, or take their king. A win pays +%d training points and a card." % [
+		int(GameConfig.value("match", "target_score")), int(GameConfig.value("economy", "win_points"))], "Caption", 240)
+	column.add_child(stakes)
 	return panel
 
 
 func _refresh() -> void:
+	if _selected == null and _cursor.has_focus():
+		_cursor.release_focus()
 	_refresh_list()
 	_refresh_board()
 	var cost := 0
@@ -145,7 +250,10 @@ func _refresh() -> void:
 	_start.disabled = not validation["ok"]
 	if not validation["ok"]:
 		_message.text = validation["error"]
-		_message.add_theme_color_override("font_color", Palette.OXBLOOD)
+		_message.add_theme_color_override("font_color", Palette.OXBLOOD_INK)
+	elif _selected != null and _cursor.has_focus():
+		_message.text = "Arrows choose a square · Enter places your %s · Esc puts it back" % _selected.type
+		_message.add_theme_color_override("font_color", Palette.BRASS)
 	elif _selected != null:
 		_message.text = "Place your %s on a highlighted square" % _selected.type
 		_message.add_theme_color_override("font_color", Palette.BRASS)
@@ -155,11 +263,19 @@ func _refresh() -> void:
 
 
 func _refresh_list() -> void:
+	_update_fade.call_deferred()
+	# Rows are rebuilt: keep keyboard focus on the same piece's row.
+	var focused := (get_viewport().gui_get_focus_owner() if is_inside_tree() else null) as RosterRow
+	var focus_piece: PieceData = focused.piece if focused != null else null
+	var focus_visible := focused != null and focused.has_focus(true)
 	Ui.clear(_list)
 	var pieces := Game.run.collection.duplicate()
 	pieces.sort_custom(func(a: PieceData, b: PieceData) -> bool: return a.deploy_cost() > b.deploy_cost())
 	for piece: PieceData in pieces:
-		_list.add_child(_piece_row(piece))
+		var row := _piece_row(piece)
+		_list.add_child(row)
+		if piece == focus_piece:
+			row.grab_focus(not focus_visible)
 
 
 func _piece_row(piece: PieceData) -> RosterRow:
@@ -167,7 +283,7 @@ func _piece_row(piece: PieceData) -> RosterRow:
 	row.padding = 8
 	row.piece = piece
 	row.is_selected = piece == _selected
-	row.tooltip_text = Ui.piece_tooltip(piece)
+	row.tooltip_text = Ui.piece_tooltip(piece) + ("\n" + KING_HINT if piece.type == "king" else "")
 	var on_board := _square_of(piece) != BoardView.NO_SQUARE
 	var content := Ui.hbox(8)
 	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -178,7 +294,8 @@ func _piece_row(piece: PieceData) -> RosterRow:
 	var text := Ui.vbox(0)
 	text.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	text.add_child(Ui.label(Ui.piece_name(piece.type), "Strong", Palette.IVORY if not on_board else Palette.IVORY_FAINT))
+	# Placed pieces dim their token only; the text keeps full contrast.
+	text.add_child(Ui.label(Ui.piece_name(piece.type), "Strong"))
 	var detail := "Always plays" if piece.type == "king" else ("On the board" if on_board else "Benched")
 	if piece.upgrade != "":
 		detail = "%s · %s" % [Ui.upgrade_name("piece", piece.upgrade), detail]
@@ -186,9 +303,70 @@ func _piece_row(piece: PieceData) -> RosterRow:
 	content.add_child(text)
 	var cost := Ui.label("free" if piece.type == "king" else str(piece.deploy_cost()), "Strong", Palette.BRASS)
 	content.add_child(cost)
-	row.modulate = Color(1, 1, 1, 0.6) if on_board and piece != _selected else Color.WHITE
+	token.modulate.a = 0.5 if on_board and piece != _selected else 1.0
 	row.pressed.connect(_on_row_pressed.bind(piece))
+	row.gui_input.connect(func(event: InputEvent) -> void:
+		if event.is_action_pressed("ui_accept"):
+			row.accept_event()
+			_on_row_key(piece))
 	return row
+
+
+## Enter on a collection row: pick up a benched piece (or the king) and choose
+## its square with the board cursor; bench a placed piece.
+func _on_row_key(piece: PieceData) -> void:
+	if piece.type != "king" and _square_of(piece) != BoardView.NO_SQUARE:
+		_bench(piece)
+		return
+	var square := _square_of(piece) if piece.type == "king" else _first_free_square()
+	if square == BoardView.NO_SQUARE:
+		Feel.refuse(_message, _message, "No free square left: bench a piece first")
+		return
+	_selected = piece
+	Sfx.play("piece_pickup")
+	_cursor.square = square
+	_cursor.grab_focus()
+	_refresh()
+
+
+func _on_cursor_confirmed(square: Vector2i) -> void:
+	var piece := _selected
+	if piece == null:
+		return
+	var occupant := _piece_on(square)
+	if occupant != null and occupant != piece:
+		Feel.refuse(_message, _message, "Square taken: pick a free square")
+		return
+	_place(piece, square)
+	_focus_row(piece)
+
+
+func _on_cursor_cancelled() -> void:
+	var piece := _selected
+	_selected = null
+	Sfx.play("ui_cancel")
+	_refresh()
+	_focus_row(piece)
+
+
+## Gives keyboard focus back to `piece`'s collection row.
+func _focus_row(piece: PieceData) -> void:
+	for row: RosterRow in _list.get_children():
+		if row.piece == piece and not row.is_queued_for_deletion():
+			row.grab_focus()
+			return
+
+
+## The first free deploy square: back rank first, centre files first.
+func _first_free_square() -> Vector2i:
+	var centre := (_board.board_size - 1) / 2.0
+	var files := range(_board.board_size)
+	files.sort_custom(func(a: int, b: int) -> bool: return absf(a - centre) < absf(b - centre))
+	for y in _deploy_rows():
+		for x: int in files:
+			if _piece_on(Vector2i(x, y)) == null:
+				return Vector2i(x, y)
+	return BoardView.NO_SQUARE
 
 
 func _refresh_board() -> void:
@@ -200,7 +378,7 @@ func _refresh_board() -> void:
 	_board.zone = zone
 	for entry in _opponent["pieces"]:
 		var token := PieceToken.create(48, PieceData.new(entry["type"]), 1)
-		token.modulate.a = 0.75
+		token.modulate.a = 0.85
 		_board.set_token("opponent_%d_%d" % [entry["square"][0], entry["square"][1]], token, Vector2i(int(entry["square"][0]), int(entry["square"][1])))
 	for entry in _roster:
 		var piece: PieceData = entry["piece"]
@@ -223,6 +401,7 @@ func _on_row_pressed(piece: PieceData) -> void:
 		_bench(piece)
 		return
 	_selected = null if piece == _selected else piece
+	Sfx.play("piece_pickup" if _selected != null else "ui_cancel")
 	_refresh()
 
 
@@ -231,17 +410,16 @@ func _on_square_clicked(square: Vector2i) -> void:
 	if occupant != null:
 		if occupant.type == "king" and _selected != occupant:
 			_selected = occupant
+			Sfx.play("piece_pickup")
 			_refresh()
 		elif occupant != _selected:
 			_bench(occupant)
 		return
 	if _selected == null:
-		_message.text = "Pick a piece from your collection first"
-		Ui.shake(_message)
+		Feel.refuse(_message, _message, "Pick a piece from your collection first")
 		return
 	if square.y >= _deploy_rows():
-		_message.text = "Pieces go on your back %d ranks" % _deploy_rows()
-		Ui.shake(_message)
+		Feel.refuse(_message, _message, "Pieces go on your back %d ranks" % _deploy_rows())
 		return
 	_place(_selected, square)
 
@@ -261,9 +439,7 @@ func _on_dropped(square: Vector2i, data: Variant) -> void:
 	if origin == BoardView.NO_SQUARE:
 		_selected = null
 		_refresh()
-		_message.text = "Square taken: click that piece to bench it first"
-		_message.add_theme_color_override("font_color", Palette.OXBLOOD)
-		Ui.shake(_message)
+		Feel.refuse(_message, _message, "Square taken: click that piece to bench it first")
 		return
 	_remove(occupant)
 	_roster.append({"piece": occupant, "square": origin})
@@ -279,10 +455,22 @@ func _place(piece: PieceData, square: Vector2i) -> void:
 	_roster.append({"piece": piece, "square": square})
 	_selected = null
 	_refresh()
-	Ui.pop(_board.token(piece.uid), 1.2)
+	Sfx.play(_land_sound(piece.type))
+	Feel.pop(_board.token(piece.uid), 1.2)
+
+
+## Heavier pieces land with a heavier knock (same mapping as the match).
+static func _land_sound(piece_type: String) -> String:
+	match piece_type:
+		"pawn", "knight":
+			return "piece_land_light"
+		"bishop", "rook":
+			return "piece_land_medium"
+	return "piece_land_heavy"
 
 
 func _bench(piece: PieceData) -> void:
+	Sfx.play("ui_cancel")
 	_remove(piece)
 	if _selected == piece:
 		_selected = null
@@ -320,9 +508,65 @@ func _start_match() -> void:
 	var setup := Game.run.build_match_setup(_roster)
 	if setup.has("ok"):
 		_is_starting = false
-		_message.text = setup["error"]
-		_message.add_theme_color_override("font_color", Palette.OXBLOOD)
-		Ui.shake(_message)
+		Feel.refuse(_message, _message, setup["error"])
 		return
+	Sfx.play("ui_confirm")
 	Game.match_setup = setup
 	Game.show_phase()
+
+
+## The keyboard's square cursor over the roster board: a dashed ivory square (the
+## same focus shape as the menu tiles) drawn above the BoardView's tokens. Arrows
+## walk the deploy squares, Enter confirms, Esc cancels. Visible only while focused.
+class SquareCursor extends Control:
+	signal confirmed(square: Vector2i)
+	signal cancelled
+
+	var board: BoardView
+	var rows: int = 2
+	var square: Vector2i = BoardView.NO_SQUARE:
+		set(value):
+			square = value
+			queue_redraw()
+
+	func _ready() -> void:
+		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		focus_mode = Control.FOCUS_ALL
+		z_index = 1
+		focus_entered.connect(queue_redraw)
+		focus_exited.connect(queue_redraw)
+		board.resized.connect(queue_redraw)
+
+	func _gui_input(event: InputEvent) -> void:
+		var step := Vector2i.ZERO
+		if event.is_action_pressed("ui_left"):
+			step = Vector2i.LEFT
+		elif event.is_action_pressed("ui_right"):
+			step = Vector2i.RIGHT
+		elif event.is_action_pressed("ui_up"):
+			step = Vector2i(0, 1)  # up the screen is up the board (rank + 1)
+		elif event.is_action_pressed("ui_down"):
+			step = Vector2i(0, -1)
+		elif event.is_action_pressed("ui_accept"):
+			accept_event()
+			confirmed.emit(square)
+			return
+		elif event.is_action_pressed("ui_cancel"):
+			accept_event()
+			cancelled.emit()
+			return
+		else:
+			return
+		accept_event()
+		var next := square + step
+		if next.x >= 0 and next.x < board.board_size and next.y >= 0 and next.y < rows:
+			square = next
+			Sfx.play("ui_hover")
+
+	func _draw() -> void:
+		if has_focus() and board.contains_square(square):
+			# A dark under-stroke keeps the ivory dashes visible on the light squares.
+			var rect := board.square_rect(square).grow(-3.0)
+			draw_rect(rect, Palette.WALNUT_DEEP, false, 4.0)
+			SelectTile.draw_dashed_ring(self, rect)

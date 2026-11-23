@@ -1,8 +1,13 @@
 {
-  "dirs": ["res://tests/unit", "res://tests/integration"],
+  "dirs": [
+    "res://tests/unit",
+    "res://tests/integration"
+  ],
   "include_subdirs": true,
   "prefix": "test_",
   "suffix": ".gd",
   "log_level": 1,
-  "should_exit": true
+  "should_exit": true,
+  "pre_run_script": "res://tests/hooks/gut_pre_run.gd",
+  "post_run_script": "res://tests/hooks/gut_post_run.gd"
 }

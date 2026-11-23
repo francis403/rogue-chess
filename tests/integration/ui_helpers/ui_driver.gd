@@ -2,11 +2,17 @@ extends RefCounted
 ## Drives the real main scene like a player: presses Buttons, clicks tiles, cards,
 ## map nodes and board squares through the widgets' own input handlers, and waits
 ## (in real time, with Engine.time_scale raised) for animations and opponent turns.
-## Never touches user://meta.json: storage goes to a temp folder under user://.
+## Never touches user://meta.json or user://settings.json: storage and settings go
+## to a temp folder of this process (tests/hooks/test_tmp.gd), so parallel GUT runs
+## never share meta files or run logs. Matches run at DEFAULT_SPEED ("fast": every
+## animation step still plays, in about half the time); pass "normal" to start()
+## to cover the real timings.
 
+const TestTmp := preload("res://tests/hooks/test_tmp.gd")
 const MAIN_SCENE := "res://scenes/main.tscn"
 const TIME_SCALE := 40.0
 const DEFAULT_TIMEOUT_MSEC := 15000
+const DEFAULT_SPEED := "fast"
 
 var main: Control
 var temp_dir: String
@@ -17,20 +23,25 @@ var failures: Array[String] = []
 var _tree: SceneTree
 var _host: Node
 var _old_time_scale: float = 1.0
+var _old_settings_path: String = ""
 var _saved_random_chance: Dictionary = {}
 
 
 func _init(host: Node, dir_name: String) -> void:
 	_host = host
 	_tree = host.get_tree()
-	temp_dir = "user://ui_test_tmp/%s/" % dir_name
+	temp_dir = TestTmp.dir("ui/" + dir_name)
 	brain_rng.seed = 7
 
 
-## Fresh temp storage, optional pre-seeded unlocks, main scene instanced, faster clock.
-func start(unlocked_sets: Array = [], unlocked_artifacts: Array = []) -> void:
+## Fresh temp storage and settings (at `anim_speed`), optional pre-seeded unlocks,
+## main scene instanced, faster clock.
+func start(unlocked_sets: Array = [], unlocked_artifacts: Array = [], anim_speed: String = DEFAULT_SPEED) -> void:
 	remove_dir(temp_dir)
 	DirAccess.make_dir_recursive_absolute(temp_dir)
+	_old_settings_path = Settings.path
+	Settings.use_path(settings_path())
+	Settings.set_value("anim_speed", anim_speed)
 	if not unlocked_sets.is_empty() or not unlocked_artifacts.is_empty():
 		var meta := MetaStore.new(meta_path())
 		for set_id: String in unlocked_sets:
@@ -58,8 +69,11 @@ func stop() -> void:
 	Game.run = null
 	Game.match_setup = {}
 	Game.use_storage(MetaStore.DEFAULT_PATH, RunLogger.DEFAULT_DIR)
+	# Back to the suite's temp settings (the GUT pre-run hook); loading never saves.
+	if _old_settings_path != "":
+		Settings.use_path(_old_settings_path)
 	remove_dir(temp_dir)
-	DirAccess.remove_absolute(temp_dir.get_base_dir().get_base_dir())  # the shared parent, once empty
+	DirAccess.remove_absolute(TestTmp.dir("ui"))  # the parent, once empty
 
 
 ## Test seam for "set up an easy win": every opponent plays uniformly random legal
@@ -82,6 +96,10 @@ func restore_opponents() -> void:
 
 func meta_path() -> String:
 	return temp_dir + "meta.json"
+
+
+func settings_path() -> String:
+	return temp_dir + "settings.json"
 
 
 func log_dir() -> String:
@@ -185,14 +203,25 @@ func right_click(control: Control) -> void:
 
 ## Presses Esc through the viewport (so _unhandled_input handlers see it).
 func press_escape() -> void:
+	press_key(KEY_ESCAPE)
+
+
+## Presses and releases a key through the viewport, like a keyboard: the focused
+## control, then shortcut and unhandled-input handlers (overlays first) see it.
+func press_key(keycode: Key) -> void:
 	var event := InputEventKey.new()
-	event.keycode = KEY_ESCAPE
-	event.physical_keycode = KEY_ESCAPE
+	event.keycode = keycode
+	event.physical_keycode = keycode
 	event.pressed = true
 	main.get_viewport().push_input(event)
 	var release := event.duplicate()
 	release.pressed = false
 	main.get_viewport().push_input(release)
+
+
+## Overlays (settings, deck, collection) currently open above the screen.
+func overlays() -> Array:
+	return main.get_node("%OverlayHost").get_children().filter(func(node: Node) -> bool: return not node.is_queued_for_deletion())
 
 
 # --- Title / set / artifacts / map ------------------------------------------------

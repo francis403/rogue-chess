@@ -97,3 +97,16 @@ func test_event_text_for_check_and_escape() -> void:
 	var escape := {"type": "escape", "side": 1, "from": Vector2i(2, 5), "to": Vector2i(3, 5), "cost": 1}
 	assert_string_contains(EventText.describe(escape, names), "c6 → d6")
 	assert_eq(EventText.describe({"type": "escape_declined", "side": 0}, names), "You stayed in check")
+
+
+func test_unplayable_reason_for_energy_and_move_cards() -> void:
+	var game := _game(["queen", "rook", "move", "pawn", "pawn"], [H.piece("queen", Vector2i(2, 1)), H.piece("rook", Vector2i(4, 0))])
+	game.play(H.card_index(game, "rook"), Vector2i(4, 0), Vector2i(4, 3))
+	# 3 energy - 2 for the rook leaves 1: the queen (3) is too dear.
+	assert_string_contains(MatchUiLogic.unplayable_reason(game, H.card_index(game, "queen")), "Not enough energy")
+	assert_eq(MatchUiLogic.unplayable_reason(game, H.card_index(game, "move")), "", "Move is still playable")
+
+
+func test_escape_cost_comes_from_config() -> void:
+	assert_eq(MatchUiLogic.escape_cost(), int(GameConfig.value("match", "check_escape_cost")))
+	assert_gt(MatchUiLogic.escape_cost(), 0)

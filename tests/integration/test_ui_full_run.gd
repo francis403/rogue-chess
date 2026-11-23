@@ -8,8 +8,13 @@ const REAL_META_PATH := "user://meta.json"
 ## The opponents are weakened to random play (UiDriver.weaken_opponents) so the
 ## depth-2 player brain reliably wins the run; the real AI is driven through the UI
 ## in test_ui_unlocks_and_loss.gd and test_ui_match_input.gd. A run is deterministic
-## per seed; the later seeds are only fallbacks in case AI/config tuning changes it.
-const RUN_SEEDS := [8, 5, 1, 7, 2, 3]
+## per seed: every random draw comes from the run's, the match's and the brains' own
+## seeded RandomNumberGenerators, never from UI timing or the global RNG (Sfx jitter
+## and FX use randf()/randi(), which no game RNG reads). The outcome still changes
+## when screens change what the driver clicks (which offer is first, the reward
+## order) or config tuning changes, so later seeds are fallbacks. Seed 8 (first
+## until iteration 2) now loses the boss; 5 wins it.
+const RUN_SEEDS := [5, 8, 1, 7, 2, 3]
 const ROUTE := ["L1", "L2", "L3", "L4", "L5", "L6", "BOSS"]
 
 var ui: UiDriver
@@ -30,18 +35,24 @@ func test_first_run_end_to_end_through_the_ui() -> void:
 	if OS.get_environment("UI_RUN_SEED") != "":
 		seeds = [int(OS.get_environment("UI_RUN_SEED"))]
 	var won := false
+	var won_seed := 0
 	var carried_failures: Array[String] = []
 	for run_seed: int in seeds:
 		carried_failures.append_array(ui.failures)
 		await ui.stop()
-		ui = UiDriver.new(self, "full_run")
+		# Each attempt gets its own temp folder: a lost attempt's run log can never be counted.
+		ui = UiDriver.new(self, "full_run_seed%d" % run_seed)
 		ui.failures.append_array(carried_failures)
 		carried_failures.clear()
 		await ui.start()  # fresh temp meta: a true first run every attempt
 		ui.weaken_opponents()
 		if await _first_run(run_seed):
 			won = true
+			won_seed = run_seed
 			break
+		if is_failing():
+			# A broken screen, not a lost run: another seed would only repeat the failures.
+			return
 		gut.p("seed %d lost before beating the boss; trying the next seed" % run_seed)
 	if not won:
 		fail_test("No seed in %s beat the boss. The UI flow worked; pick new RUN_SEEDS." % [seeds])
@@ -57,7 +68,7 @@ func test_first_run_end_to_end_through_the_ui() -> void:
 	assert_true(_has_label(ui.screen(), "The boss has fallen"))
 	assert_true(Game.unlocks().is_piece_set_unlocked("fire"))
 	assert_true(MetaStore.new(ui.meta_path()).is_piece_set_unlocked("fire"), "unlock saved to the temp meta file")
-	assert_eq(_run_log_count(), 1, "one run log written to the temp log folder")
+	assert_eq(_run_logs(), ["seed %d" % won_seed], "exactly one run log, for this attempt's seed, in its temp log folder")
 
 	# Start new run -> set select with a fresh session, Fire now selectable.
 	var finished_run: RunSession = Game.run
@@ -198,9 +209,11 @@ func _has_label(root: Node, text: String) -> bool:
 	return false
 
 
-func _run_log_count() -> int:
-	var count := 0
+## "seed N" for every run log in the current attempt's log folder (from the log's own "seed").
+func _run_logs() -> Array:
+	var logs := []
 	for file_name in DirAccess.get_files_at(ui.log_dir()):
-		if file_name.begins_with("run_"):
-			count += 1
-	return count
+		if file_name.begins_with("run_") and file_name.ends_with(".json"):
+			var data: Variant = JSON.parse_string(FileAccess.get_file_as_string(ui.log_dir() + file_name))
+			logs.append("seed %d" % int(data.get("seed", -1)) if data is Dictionary else file_name)
+	return logs

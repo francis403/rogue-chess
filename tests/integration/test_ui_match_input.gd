@@ -69,6 +69,8 @@ func test_input_during_the_opponent_turn_does_nothing() -> void:
 		assert_eq(game.energy(ChessMatch.PLAYER), energy_before)
 		for view: CardView in ui.hand_views():
 			assert_false(view.is_selected, "no card gets selected")
+		for view: CardView in ui.screen()._card_views:
+			assert_false(view.is_playable, "held cards look unplayable during the opponent's turn")
 		var board := ui.board()
 		assert_eq(board.targets, [] as Array[Vector2i], "no targets highlighted")
 		assert_eq(board.selected, NO_SQUARE, "no piece selected")
@@ -140,7 +142,8 @@ func test_redraw_button_only_enabled_when_can_redraw() -> void:
 	var end_turn := ui.button("End turn", ui.screen())
 	assert_true(game.can_redraw())
 	assert_false(redraw.disabled, "nothing playable: Redraw is enabled")
-	assert_eq(end_turn.text, "End turn (nothing playable)")
+	assert_eq(end_turn.text, MatchView.END_TURN_STUCK)
+	assert_true(end_turn.text.begins_with("End turn"), "the label keeps its prefix")
 	# Each press is one redraw (repeatable while affordable, D8) until energy runs out.
 	for energy_left in [2, 1, 0]:
 		var hand_before := ui.hand_uids()
@@ -194,7 +197,15 @@ func test_card_first_and_piece_first_play_the_expected_card() -> void:
 	_hover(board, Vector2i(1, 2))
 	assert_true(ui.hand_views()[ui.hand_index("pawn")].is_highlighted, "hovering the target previews the Pawn card")
 	assert_false(ui.hand_views()[ui.hand_index("move")].is_highlighted)
+	var hand_size := ui.hand_views().size()
 	ui.click_square(Vector2i(1, 2))
+	# The played card leaves the hand at once: no gap, and the key caps renumber.
+	assert_true(ui.screen().is_busy())
+	var playing: Array = ui.screen()._card_views
+	assert_eq(playing.size(), hand_size - 1, "the played card left the hand before the move plays")
+	for i in playing.size():
+		assert_eq((playing[i] as CardView).key_hint, str(i + 1), "key caps renumber at once")
+		assert_ne((playing[i] as CardView).card.uid, pawn_card.uid)
 	assert_true(await ui.wait_match_idle())
 	assert_false(ui.hand_uids().has(pawn_card.uid), "the Pawn card was played")
 	assert_true(ui.hand_uids().has(move_card.uid), "Move stays in hand")

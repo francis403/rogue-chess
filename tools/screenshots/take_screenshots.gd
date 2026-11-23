@@ -1,59 +1,97 @@
 extends Node
-## Drives three runs through every screen and saves PNGs to docs/screenshots/.
-## Uses a temp MetaStore and log folder, never user://meta.json.
+## Drives runs through every screen and saves PNGs:
+##   docs/screenshots/NN_*.png          every screen at 1280x720 (the base canvas)
+##   docs/screenshots/1080p/NN_*.png    a subset as a 1920x1080 window shows it
+##   docs/screenshots/16x10/NN_*.png    the same subset in a 1280x800 window (aspect expand)
+##   docs/screenshots/frames/*_NN.png   motion frame sequences (capture, explosion, card play,
+##                                      turn banner, settings, map travel, coaching accept,
+##                                      deck overlay, run-end victory)
+## Uses a temp MetaStore, log folder and settings file (normal animation speed) in a
+## folder of this process (user://screenshot_tmp/p<pid>/), never user://meta.json or
+## user://settings.json, so it can run while GUT or the sim runs.
 ## Run (needs a window, not headless):
 ##   /Applications/Godot.app/Contents/MacOS/Godot --path . res://tools/screenshots/take_screenshots.tscn
 
+const ShotStage := preload("res://tools/screenshots/shot_stage.gd")
+const ShotMoments := preload("res://tools/screenshots/shot_moments.gd")
+
 const OUT_DIR := "res://docs/screenshots/"
-const TEMP_DIR := "user://screenshot_tmp/"
-const MAIN_SCENE := "res://scenes/main.tscn"
+const FRAMES_DIR := OUT_DIR + "frames/"
+const TEMP_PARENT := "user://screenshot_tmp/"
+const BASE_WINDOW := Vector2i(1280, 720)
+## The run end plays its payoff (count-up, unlock deal-in) for about 2.5 s at normal speed.
+const RUN_END_SETTLE := 3.0
+## Extra window sizes: output subfolder -> window size.
+const EXTRA_WINDOWS := {"1080p": Vector2i(1920, 1080), "16x10": Vector2i(1280, 800)}
 
-var _main: Control
-## Renders the game at exactly 1280x720 whatever size the OS gives the window.
-var _viewport: SubViewport
-
-
-## Opponent stand-in for the escape-prompt shot: one scripted rook move, then end turn.
-class ScriptedAI extends MatchAI:
-	var rook_move: Array = []
-
-	func choose_action(game: ChessMatch) -> Dictionary:
-		if game.pending_escape_side() == side:
-			return {"kind": "decline_escape"}
-		var hand := game.hand(side)
-		for i in hand.size():
-			if hand[i].type == "rook" and not rook_move.is_empty():
-				var move: Array = rook_move
-				rook_move = []
-				return {"kind": "play", "card_index": i, "from": move[0], "to": move[1]}
-		return {"kind": "end_turn"}
-
-var _count: int = 0
+## This process's temp folder.
+var _temp_dir := "%sp%d/" % [TEMP_PARENT, OS.get_process_id()]
+var _stage: ShotStage
+var _moments: ShotMoments
+var _saved: int = 0
 
 
 func _ready() -> void:
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
-	DisplayServer.window_set_size(Vector2i(1280, 720))
+	DisplayServer.window_set_size(BASE_WINDOW)
 	# macOS stops drawing an occluded window, which would freeze every later screenshot.
 	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_ALWAYS_ON_TOP, true)
 	DisplayServer.window_move_to_foreground()
-	_remove_dir(TEMP_DIR)
-	DirAccess.make_dir_recursive_absolute(TEMP_DIR)
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
-	Game.use_storage(TEMP_DIR + "meta.json", TEMP_DIR + "logs/")
-	_viewport = SubViewport.new()
-	_viewport.size = Vector2i(1280, 720)
-	_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	add_child(_viewport)
-	_main = load(MAIN_SCENE).instantiate()
-	_viewport.add_child(_main)
+	_remove_dir(_temp_dir)
+	DirAccess.make_dir_recursive_absolute(_temp_dir)
+	Settings.use_path(_temp_dir + "settings.json")
+	Settings.set_value("anim_speed", "normal")
+	_remove_pngs(FRAMES_DIR)
+	await _open_stage(BASE_WINDOW, OUT_DIR, "base")
 	await _first_run()
 	await _second_run()
 	await _third_run()
-	_remove_dir(TEMP_DIR)
-	print("Saved %d screenshots to %s" % [_count, ProjectSettings.globalize_path(OUT_DIR)])
+	await _extras_run()
+	await _moments.motion_frames()
+	await _menu_frames()
+	await _close_stage()
+	for folder: String in EXTRA_WINDOWS:
+		_remove_pngs(OUT_DIR + folder + "/")
+		await _open_stage(EXTRA_WINDOWS[folder], OUT_DIR + folder + "/", folder)
+		await _subset_run()
+		await _close_stage()
+	_remove_dir(_temp_dir)
+	DirAccess.remove_absolute(TEMP_PARENT)  # only once empty
+	print("Saved %d screenshots to %s" % [_saved, ProjectSettings.globalize_path(OUT_DIR)])
 	get_tree().quit()
 
+
+## A fresh stage (viewport + main scene) with its own temp storage: a true first run.
+func _open_stage(window: Vector2i, dir: String, tag: String) -> void:
+	var storage := _temp_dir + tag + "/"
+	DirAccess.make_dir_recursive_absolute(storage)
+	Game.use_storage(storage + "meta.json", storage + "logs/")
+	Game.run = null
+	Game.match_setup = {}
+	_stage = ShotStage.new()
+	add_child(_stage)
+	_stage.open(window, dir)
+	_moments = ShotMoments.new(_stage, FRAMES_DIR)
+	await get_tree().process_frame
+
+
+func _close_stage() -> void:
+	_saved += _stage.saved.size()
+	_stage.close()
+	await get_tree().process_frame
+	_stage = null
+	_moments = null
+
+
+func _shot(shot_name: String, settle: float = ShotStage.SETTLE) -> void:
+	await _stage.shot(shot_name, settle)
+
+
+func _screen() -> Control:
+	return _stage.screen()
+
+
+# --- Base pass (1280x720) --------------------------------------------------------
 
 func _first_run() -> void:
 	await _shot("title")
@@ -65,15 +103,15 @@ func _first_run() -> void:
 	_go("L1")
 	await _shot("roster")
 	_screen()._start_match()
-	await _wait_idle()
+	await _stage.wait_idle()
 	await _shot("match_start")
-	await _select_first_card()
+	_moments.select_first_card()
 	await _shot("match_card_selected")
 	_screen()._cancel()
-	await _select_first_piece()
+	_moments.select_first_piece()
 	await _shot("match_piece_first")
-	await _capture_scene()
-	await _match_over_scene()
+	await _moments.capture_scene()
+	await _moments.match_over_scene()
 	_screen()._finish_match()
 	await _shot("reward")
 	Game.run.take_reward(0)
@@ -83,9 +121,9 @@ func _first_run() -> void:
 	await _shot("shop")
 	_screen()._open_removal()
 	await _shot("shop_remove_card")
-	_close_overlays()
+	await _close_overlays()
 	_buy_affordable_card()
-	await _shot("shop_after_buy")
+	await _shot("shop_after_buy", 0.4)  # the "−N pt" float is still rising
 	Game.run.leave_shop()
 	_skip_match("L3", false)
 	_skip_match("L4", false)
@@ -93,12 +131,12 @@ func _first_run() -> void:
 	await _shot("coaching")
 	_accept_first_coaching()
 	await _shot("coaching_accepted")
-	_main._show_deck()
+	await _stage.key(KEY_D)
 	await _shot("deck_view")
-	_close_overlays()
-	_main._show_collection()
+	await _close_overlays()
+	await _stage.key(KEY_C)
 	await _shot("collection_view")
-	_close_overlays()
+	await _close_overlays()
 	Game.run.leave_coaching()
 	_skip_match("L6", true)
 	Game.show_phase()
@@ -106,11 +144,11 @@ func _first_run() -> void:
 	_go("BOSS")
 	await _shot("roster_boss")
 	_screen()._start_match()
-	await _wait_idle()
+	await _stage.wait_idle()
 	await _shot("match_boss")
 	Game.run.finish_match({"winner": 0, "reason": "king", "scores": [6, 2]})
 	Game.show_phase()
-	await _shot("run_end_victory")
+	await _shot("run_end_victory", RUN_END_SETTLE)
 
 
 func _second_run() -> void:
@@ -120,24 +158,20 @@ func _second_run() -> void:
 	_go("M1")
 	await _shot("roster_fire")
 	_screen()._start_match()
-	await _wait_idle()
-	await _select_first_piece()
+	await _stage.wait_idle()
+	_moments.select_first_piece()
 	await _shot("match_fire_ignite_hint")
 	_screen()._cancel()
-	await _play_first_legal()
-	await _play_first_legal()
+	await _moments.play_first_legal()
+	await _moments.play_first_legal()
 	await _shot("match_fire_burning")
 	Game.run.finish_match({"winner": 1, "reason": "score", "scores": [3, 10]})
 	Game.show_phase()
-	await _shot("run_end_defeat")
+	await _shot("run_end_defeat", RUN_END_SETTLE)
 
 
 func _third_run() -> void:
-	var meta := Game.unlocks()
-	for artifact_id: String in GameConfig.data("artifacts")["unlock_pool"]:
-		if not meta.unlocked_artifacts.has(artifact_id):
-			meta.unlocked_artifacts.append(artifact_id)
-	meta.save()
+	_unlock_all_artifacts()
 	Game.show_title()
 	await _shot("title_progress")
 	Game.new_run(33)
@@ -148,148 +182,216 @@ func _third_run() -> void:
 	await _shot("artifact_select")
 	_screen()._continue()
 	_go("M1")
-	_screen()._start_match()
-	await _wait_idle()
-	await _shot("match_artifacts_holes")
-	await _shield_and_explosion_scene()
-	await _check_scenes()
+	await _stage.wait(ShotStage.SETTLE)
+	if await _pick_up_with_keyboard():
+		await _shot("roster_keyboard_cursor", 0.4)
 
 
-# --- Crafted match moments ------------------------------------------------------
-
-func _capture_scene() -> void:
-	_show_crafted(_crafted(
-		[["king", 2, 0], ["knight", 1, 2], ["pawn", 3, 1], ["rook", 0, 0, "shield"], ["bishop", 4, 0, "range"]],
-		[["king", 2, 5], ["bishop", 2, 4], ["pawn", 4, 4], ["knight", 1, 5]],
-		["knight", "knight:hold", "move", "rook", "pawn:cheaper"], ["pawn", "knight", "move", "bishop", "pawn"]))
-	await _wait_idle()
-	await _press_play("knight", Vector2i(1, 2), Vector2i(2, 4), 0.22)
-	await _shot("match_capture")
-	await _wait_idle()
-	_screen()._on_end_turn()
-	await _settle(0.5)
-	await _shot("match_opponent_turn")
-	await _wait_idle()
-	await _shot("match_after_opponent")
-
-
-func _match_over_scene() -> void:
-	_show_crafted(_crafted([["king", 2, 0], ["queen", 2, 3]], [["king", 2, 5], ["pawn", 0, 4]],
-		["queen", "queen", "queen", "move", "move"], ["pawn", "move", "move", "move", "move"]))
-	await _wait_idle()
-	await _press_play("queen", Vector2i(2, 3), Vector2i(2, 5), 0.0)
-	await _wait_idle()
-	await _shot("match_over")
-
-
-func _shield_and_explosion_scene() -> void:
-	_show_crafted(_crafted(
-		[["king", 2, 0], ["rook", 2, 2], ["knight", 4, 2], ["pawn", 1, 1]],
-		[["king", 0, 5], ["bishop", 2, 4, "shield"], ["pawn", 5, 4], ["pawn", 4, 4], ["knight", 4, 5]],
-		["rook", "knight", "move", "pawn", "move"], ["pawn", "move", "move", "move", "move"], ["exploding"]))
-	await _wait_idle()
-	await _press_play("rook", Vector2i(2, 2), Vector2i(2, 4), 0.12)
-	await _shot("match_shield_block")
-	await _settle(0.4)
-	await _press_play("knight", Vector2i(4, 2), Vector2i(5, 4), 0.1)
-	await _shot("match_explosion")
-	await _wait_idle()
-
-
-## The opponent answers the player's check, then the player's own escape prompt.
-func _check_scenes() -> void:
-	_show_crafted(_crafted([["king", 0, 0], ["rook", 3, 1], ["pawn", 1, 1]], [["king", 2, 5], ["pawn", 4, 4], ["knight", 4, 5]],
-		["rook", "move", "pawn", "move", "move"], ["move", "move", "move", "move", "move"]))
-	await _wait_idle()
-	await _press_play("rook", Vector2i(3, 1), Vector2i(2, 1), 0.0)
-	await _settle(float(GameConfig.value("ai", "move_delay_seconds")) + 0.45)
-	await _shot("match_opponent_escapes")
-	await _wait_idle()
-	_show_crafted(_crafted([["king", 2, 0], ["pawn", 5, 1], ["pawn", 0, 1], ["knight", 1, 0]], [["king", 5, 5], ["rook", 3, 5], ["pawn", 4, 4]],
-		["move", "move", "pawn", "knight", "move"], ["rook", "rook", "rook", "rook", "rook"]))
-	await _wait_idle()
-	var scripted := ScriptedAI.new(ChessMatch.OPPONENT, 1, 0.0, RandomNumberGenerator.new())
-	scripted.rook_move = [Vector2i(3, 5), Vector2i(2, 5)]
-	_screen()._ai = scripted
-	_screen()._on_end_turn()
-	await _wait_idle()
-	await _shot("match_escape_prompt")
-
-
-## A setup in ChessMatch format. Pieces: [type, x, y, upgrade?]; cards: "type:upgrade".
-func _crafted(player: Array, opponent: Array, player_deck: Array, opponent_deck: Array, player_artifacts: Array = []) -> Dictionary:
-	return {
-		"seed": 5,
-		"holes": [] as Array[Vector2i],
-		"player": {"roster": _roster(player, Game.run.piece_set), "deck": _cards(player_deck), "artifacts": player_artifacts},
-		"opponent": {"id": "easy", "name": "Rookie Rex", "difficulty": "Easy", "search_depth": 1, "random_chance": 0.0,
-			"roster": _roster(opponent, "standard"), "deck": _cards(opponent_deck), "artifacts": []},
-	}
-
-
-func _roster(entries: Array, set_id: String) -> Array[Dictionary]:
-	var roster: Array[Dictionary] = []
-	for entry: Array in entries:
-		var upgrade: String = entry[3] if entry.size() > 3 else ""
-		roster.append({"piece": PieceData.new(entry[0], set_id, upgrade), "square": Vector2i(entry[1], entry[2])})
-	return roster
-
-
-func _cards(specs: Array) -> Array[CardData]:
-	var cards: Array[CardData] = []
-	for spec: String in specs:
-		var parts := spec.split(":")
-		cards.append(CardData.new(parts[0], parts[1] if parts.size() > 1 else ""))
-	return cards
-
-
-func _show_crafted(setup: Dictionary) -> void:
-	Game.match_setup = setup
-	_main.show_screen("MATCH")
-
-
-## Selects the card of `card_type`, then the piece, then the target; shoots after `delay`.
-func _press_play(card_type: String, from: Vector2i, to: Vector2i, delay: float) -> void:
-	var screen := _screen()
-	var hand: Array[CardData] = screen.game.hand(ChessMatch.PLAYER)
-	for i in hand.size():
-		if hand[i].type == card_type and not screen.game.targets(i, from).is_empty():
-			screen.press_card(i)
+## On the roster: Enter on a benched collection row (else the king's row) picks the
+## piece up and shows the board's square cursor; Right walks it one deploy square.
+func _pick_up_with_keyboard() -> bool:
+	var rows := _screen().find_children("*", "RosterRow", true, false).filter(
+		func(row: Control) -> bool: return row.is_visible_in_tree())
+	if rows.is_empty():
+		push_warning("Screenshot tool: no roster rows for roster_keyboard_cursor")
+		return false
+	var picked: Control = rows[0]
+	for row: Control in rows:
+		if row.piece.type != "king" and _screen()._square_of(row.piece) == BoardView.NO_SQUARE:
+			picked = row
 			break
-	await _settle(0.25)
-	screen.press_square(from)
-	screen.press_square(to)
-	await _settle(delay)
+	picked.grab_focus()
+	await _stage.key(KEY_ENTER)
+	await _stage.key(KEY_RIGHT)
+	return true
+	_screen()._continue()
+	_go("M1")
+	_screen()._start_match()
+	await _stage.wait_idle()
+	await _shot("match_artifacts_holes")
+	await _moments.shield_and_explosion_scene()
+	await _moments.check_scenes()
 
 
-func _select_first_card() -> void:
-	var screen := _screen()
-	var game: ChessMatch = screen.game
-	for i in game.hand(ChessMatch.PLAYER).size():
-		if game.is_card_playable(i) and game.hand(ChessMatch.PLAYER)[i].type != "move":
-			screen.press_card(i)
-			var pieces := game.pieces_for_card(i)
-			screen.press_square(pieces[pieces.size() / 2])
-			return
+## Settings (title and match), keyboard focus on the map and in the deck overlay,
+## a hovered card. Reduced motion is not visual, so it has no shot.
+func _extras_run() -> void:
+	Game.show_title()
+	await _stage.wait(ShotStage.SETTLE)
+	await _stage.key(KEY_F1)
+	await _shot("settings_title", 0.5)
+	await _stage.key(KEY_F1)
+	Game.new_run(44)
+	Game.run.choose_piece_set("standard")
+	Game.show_phase()
+	if _stage.main.current_screen_name == "ARTIFACT_SELECT":
+		_screen()._continue()
+	await _stage.wait(ShotStage.SETTLE)
+	await _stage.key(KEY_RIGHT)  # keyboard navigation shows the focus ring on a node
+	await _shot("map_keyboard_focus", 0.3)
+	await _stage.key(KEY_D)
+	await _stage.wait(0.4)
+	await _stage.key(KEY_RIGHT)
+	await _stage.key(KEY_RIGHT)
+	await _shot("deck_keyboard_focus", 0.3)
+	await _stage.key(KEY_ESCAPE)
+	_go(Game.run.available_nodes()[0])
+	await _stage.wait(0.3)
+	_screen()._start_match()
+	await _stage.wait_idle()
+	await _hover_card(2)
+	await _shot("match_card_hover", 0.4)
+	await _stage.key(KEY_F1)
+	await _shot("settings_match", 0.5)
+	await _stage.key(KEY_F1)
 
 
-func _select_first_piece() -> void:
-	var squares := MatchUiLogic.movable_pieces(_screen().game)
-	_screen().press_square(squares[squares.size() - 1])
+## Hovers the player's hand card `index` (the card lifts and its tooltip text shows).
+func _hover_card(index: int) -> void:
+	var views := _screen().find_children("*", "CardView", true, false).filter(
+		func(view: CardView) -> bool: return not view.is_back and view.is_visible_in_tree())
+	if index < views.size():
+		(views[index] as CardView).mouse_entered.emit()
+	await get_tree().process_frame
 
 
-func _play_first_legal() -> void:
-	var game: ChessMatch = _screen().game
-	var plays := game.legal_plays(ChessMatch.PLAYER)
-	if plays.is_empty():
-		return
-	var play: Dictionary = plays[plays.size() - 1]
-	_screen().press_square(play["from"])
-	_screen().press_square(play["to"])
-	await _wait_idle()
+# --- Subset pass (other window sizes) -------------------------------------------
+
+## Title, settings, map, roster, match, escape prompt, reward, shop, run end, then
+## set select, coaching, deck view, artifact select and the roster keyboard cursor.
+func _subset_run() -> void:
+	await _shot("title")
+	await _stage.key(KEY_F1)
+	await _shot("settings", 0.5)
+	await _stage.key(KEY_F1)
+	Game.new_run(11)
+	Game.run.choose_piece_set("standard")
+	Game.show_phase()
+	await _shot("map")
+	_go("L1")
+	await _shot("roster")
+	_screen()._start_match()
+	await _stage.wait_idle()
+	await _shot("match")
+	await _moments.escape_prompt_scene()
+	await _shot("match_escape_prompt")
+	Game.run.finish_match({"winner": 0, "reason": "score", "scores": [10, 4]})
+	Game.show_phase()
+	await _shot("reward")
+	Game.run.take_reward(0)
+	Game.show_phase()
+	_go("L2")
+	await _shot("shop")
+	Game.run.leave_shop()
+	Game.run.choose_node("L3")
+	Game.run.build_match_setup(Game.run.default_roster())
+	Game.run.finish_match({"winner": 1, "reason": "score", "scores": [3, 10]})
+	Game.show_phase()
+	await _shot("run_end", RUN_END_SETTLE)
+	await _subset_menus()
+
+
+## Set select, coaching, deck view, artifact select and the roster's keyboard square
+## cursor (after the older shots, so their numbers stay put).
+func _subset_menus() -> void:
+	Game.new_run(11)
+	await _shot("set_select")
+	Game.run.choose_piece_set("standard")
+	Game.show_phase()
+	await _stage.wait(ShotStage.SETTLE)
+	await _to_coaching()
+	await _shot("coaching")
+	await _stage.key(KEY_D)
+	await _shot("deck_view")
+	await _close_overlays()
+	_unlock_all_artifacts()
+	Game.new_run(33)
+	Game.run.choose_piece_set("standard")
+	Game.show_phase()
+	_screen()._toggle("holes")
+	_screen()._toggle("exploding")
+	await _shot("artifact_select")
+
+
+# --- Menu motion frames (base pass) ---------------------------------------------
+
+## 6-8 frames each: the settings panel opening, map travel, a coaching Accept, the
+## deck overlay opening and the run-end victory reveal (one seed-11 run, start to boss).
+func _menu_frames() -> void:
+	Game.show_title()
+	await _stage.wait(ShotStage.SETTLE)
+	await _stage.key(KEY_F1)
+	await _stage.frames("settings_open", 7, 0.05, FRAMES_DIR)
+	await _stage.wait(0.3)
+	await _stage.key(KEY_F1)
+	await _stage.wait(0.5)
+
+	Game.new_run(11)
+	Game.run.choose_piece_set("standard")
+	Game.show_phase()
+	if _stage.main.current_screen_name == "ARTIFACT_SELECT":
+		_screen()._continue()
+	await _stage.wait(ShotStage.SETTLE)
+	_screen()._choose("L1")  # the travel marker walks to L1 (map_travel), then the roster opens
+	await _stage.frames("map_travel", 8, 0.09, FRAMES_DIR)
+	await _stage.wait(ShotStage.SETTLE)
+
+	await _to_coaching()
+	var accept := _first_button("Accept")
+	if accept != null:
+		accept.pressed.emit()
+		await _stage.frames("coaching_accept", 7, 0.06, FRAMES_DIR)
+	else:
+		push_warning("Screenshot tool: no affordable coaching offer for coaching_accept")
+	await _stage.wait(0.5)
+	await _stage.key(KEY_D)
+	await _stage.frames("deck_open", 7, 0.05, FRAMES_DIR)
+	await _stage.wait(0.3)
+	await _close_overlays()
+
+	Game.run.leave_coaching()
+	_skip_match("L6", true)
+	Game.run.choose_node("BOSS")
+	Game.run.build_match_setup(Game.run.default_roster())
+	Game.run.finish_match({"winner": 0, "reason": "king", "scores": [6, 2]})
+	Game.show_phase()
+	await _stage.frames("run_end_victory", 8, 0.35, FRAMES_DIR)
 
 
 # --- Run helpers ---------------------------------------------------------------
+
+## From the map (or L1's roster) of a fresh seed-11 run to the L5 coaching screen:
+## L1 won, the L2 shop left, L3 and L4 won (6 points to spend).
+func _to_coaching() -> void:
+	if Game.run.current_node != "L1":
+		Game.run.choose_node("L1")
+	Game.run.build_match_setup(Game.run.default_roster())
+	Game.run.finish_match({"winner": 0, "reason": "score", "scores": [10, 4]})
+	Game.run.skip_reward()
+	Game.run.choose_node("L2")
+	Game.run.leave_shop()
+	_skip_match("L3", false)
+	_skip_match("L4", false)
+	_go("L5")
+	await _stage.wait(ShotStage.SETTLE)
+
+
+func _unlock_all_artifacts() -> void:
+	var meta := Game.unlocks()
+	for artifact_id: String in GameConfig.data("artifacts")["unlock_pool"]:
+		if not meta.unlocked_artifacts.has(artifact_id):
+			meta.unlocked_artifacts.append(artifact_id)
+	meta.save()
+
+
+## The first live, enabled Button in the current screen whose text starts with `prefix`.
+func _first_button(prefix: String) -> Button:
+	for node in _screen().find_children("*", "Button", true, false):
+		var button := node as Button
+		if button.text.begins_with(prefix) and not button.disabled and button.is_visible_in_tree():
+			return button
+	return null
+
 
 func _go(node_id: String) -> void:
 	var result := Game.run.choose_node(node_id)
@@ -308,11 +410,13 @@ func _skip_match(node_id: String, take_card: bool) -> void:
 		Game.run.skip_reward()
 
 
+## Presses the first affordable card's Buy button, like a click (the card offers
+## come first in the shop's offer buttons).
 func _buy_affordable_card() -> void:
 	var offers: Array = Game.run.shop_offers()["cards"]
 	for i in offers.size():
 		if offers[i]["price"] <= Game.run.points:
-			_screen()._apply(Game.run.buy_card(i), "Bought %s" % offers[i]["card"].display_name())
+			(_screen()._offer_buttons[i] as Button).pressed.emit()
 			return
 
 
@@ -325,54 +429,30 @@ func _accept_first_coaching() -> void:
 			return
 
 
+## Frees the open item overlays and waits a frame, so the next key reaches the screen.
 func _close_overlays() -> void:
 	for overlay in get_tree().root.find_children("*", "ItemOverlay", true, false):
 		overlay.queue_free()
+	await get_tree().process_frame
 
 
-# --- Capture ------------------------------------------------------------------
+# --- Files ---------------------------------------------------------------------
 
-func _screen() -> Control:
-	return _main.current_screen
-
-
-func _shot(screen_name: String) -> void:
-	await _settle(0.45)
-	if not DisplayServer.window_can_draw():
-		# The engine skips drawing a hidden window; draw this frame by hand.
-		RenderingServer.force_draw(false)
-	_count += 1
-	var path := ProjectSettings.globalize_path(OUT_DIR + "%02d_%s.png" % [_count, screen_name])
-	var image := _viewport.get_texture().get_image()
-	image.save_png(path)
-	print("screenshot: ", path)
-
-
-func _settle(seconds: float) -> void:
-	if seconds <= 0.0:
-		await get_tree().process_frame
+## Old PNGs of a generated folder go first, so a renamed shot leaves no stale file.
+func _remove_pngs(dir_path: String) -> void:
+	var absolute := ProjectSettings.globalize_path(dir_path)
+	if not DirAccess.dir_exists_absolute(absolute):
 		return
-	await get_tree().create_timer(seconds).timeout
-
-
-func _wait_idle(limit: float = 25.0) -> void:
-	await _settle(0.3)
-	var waited := 0.0
-	while waited < limit:
-		var screen := _screen()
-		if not screen.has_method("is_busy") or not screen.is_busy():
-			return
-		await _settle(0.1)
-		waited += 0.1
-	push_warning("Screen still busy after %.0fs" % limit)
+	for file_name in DirAccess.get_files_at(absolute):
+		if file_name.ends_with(".png"):
+			DirAccess.remove_absolute(absolute.path_join(file_name))
 
 
 func _remove_dir(dir_path: String) -> void:
 	if not DirAccess.dir_exists_absolute(dir_path):
 		return
-	var dir := DirAccess.open(dir_path)
-	for sub_dir in dir.get_directories():
+	for sub_dir in DirAccess.get_directories_at(dir_path):
 		_remove_dir(dir_path.path_join(sub_dir))
-	for file_name in dir.get_files():
+	for file_name in DirAccess.get_files_at(dir_path):
 		DirAccess.remove_absolute(dir_path.path_join(file_name))
 	DirAccess.remove_absolute(dir_path)
