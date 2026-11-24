@@ -30,6 +30,15 @@ func test_every_configured_id_is_a_loaded_stream() -> void:
 			assert_true(Sfx.has_sound(id), "%s has a stream" % id)
 
 
+func test_iteration_4_sounds_load() -> void:
+	for id: String in ["capture_against", "check_stay"]:
+		assert_true(id in _audio()["sounds"], "%s is configured" % id)
+		assert_true(Sfx.has_sound(id), "%s has a stream" % id)
+	assert_eq(Sfx.variant_count("capture_against"), 3, "capture_against has 3 variants, like capture")
+	assert_eq(Sfx.variant_count("check_stay"), 1, "check_stay is a single file")
+	assert_eq(float(_audio()["sounds"]["check_stay"].get("pitch", -1)), 0.0, "check_stay is tonal: no pitch jitter")
+
+
 func test_music_streams_loop() -> void:
 	for id: String in _audio()["music"]:
 		var stream := load("res://assets/audio/music/%s.wav" % id) as AudioStreamWAV
@@ -146,7 +155,7 @@ func test_bus_volumes_follow_a_reload() -> void:
 # --- Variants, voice stealing, ducking (iteration 2) -----------------------------
 
 const HIGH_FREQUENCY := ["piece_land_light", "piece_land_medium", "piece_land_heavy", "card_draw", "capture",
-		"piece_move", "ui_click"]
+		"capture_against", "piece_move", "ui_click"]
 
 
 func test_every_configured_variant_loads() -> void:

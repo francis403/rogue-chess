@@ -260,6 +260,17 @@ func _draw() -> void:
 	for node_id in map.node_ids():
 		_draw_node(node_id)
 	_draw_marker()
+	# Captions last, on their plates: neither a path nor the travelling marker
+	# ever runs across a word.
+	for node_id in map.node_ids():
+		_draw_caption(node_position(node_id) + Vector2(0, _radius(node_id) + CAPTION_DROP),
+			node_label(map.node(node_id)).to_upper(), Palette.IVORY if _is_choice(node_id) else Palette.IVORY_FAINT)
+
+
+## A next stop still on offer: once travel starts only its target stays one
+## (the other choices stop glowing and lose their key caps at once).
+func _is_choice(node_id: String) -> bool:
+	return available.has(node_id) and (_halos.hidden_target == "" or node_id == _halos.hidden_target)
 
 
 func _draw_floor_numbers() -> void:
@@ -284,7 +295,7 @@ func _draw_edge(from_id: String, to_id: String) -> void:
 	var walked := _was_walked(from_id, to_id)
 	if walked:
 		draw_line(start, end, Palette.BRASS, 3.0, true)
-	elif from_id == current and available.has(to_id):
+	elif from_id == current and _is_choice(to_id):
 		pass  # dashed and breathing: drawn by the HaloLayer
 	elif _ahead.has(from_id) and _ahead.has(to_id):
 		draw_line(start, end, Palette.RULE_STRONG, 2.0, true)
@@ -301,7 +312,7 @@ func _draw_node(node_id: String) -> void:
 	var info := map.node(node_id)
 	var centre := node_position(node_id)
 	var radius := _radius(node_id)
-	var is_available := available.has(node_id)
+	var is_available := _is_choice(node_id)
 	var is_visited := visited.has(node_id)
 	var is_hovered := node_id == _hovered and is_available
 	var is_out := not is_available and not is_visited and not _ahead.has(node_id)
@@ -340,7 +351,6 @@ func _draw_node(node_id: String) -> void:
 	var text_size := font.get_string_size(glyph, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
 	draw_string(font, centre + Vector2(-text_size.x / 2.0, font.get_ascent(font_size) - text_size.y / 2.0), glyph,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, ink)
-	_draw_caption(centre + Vector2(0, radius + CAPTION_DROP), node_label(info).to_upper(), Palette.IVORY if is_available else Palette.IVORY_FAINT)
 	if is_available:
 		_draw_key_cap(centre + Vector2(radius * 0.72, -radius * 0.72), str(choices().find(node_id) + 1))
 
@@ -393,7 +403,8 @@ func _draw_you_are_here(centre: Vector2, radius: float) -> void:
 ## cover the inner part of each halo exactly as before.
 class HaloLayer extends Control:
 	var map_view: MapView
-	## The node being travelled to stops glowing (its ring burst takes over).
+	## Set when travel starts: every halo and dashed path goes (the walked
+	## path and the target's ring burst take over).
 	var hidden_target: String = ""
 	var pulse: float = 0.0:
 		set(value):
@@ -407,11 +418,12 @@ class HaloLayer extends Control:
 
 	func _draw() -> void:
 		var view := map_view
+		if hidden_target != "":
+			return
 		for node_id: String in view.available:
 			var centre := view.node_position(node_id)
 			var radius := view._radius(node_id)
-			if node_id != hidden_target:
-				draw_circle(centre, radius + 6 + 4 * pulse, Color(Palette.BRASS, 0.12 + 0.1 * pulse))
+			draw_circle(centre, radius + 6 + 4 * pulse, Color(Palette.BRASS, 0.12 + 0.1 * pulse))
 			if view.current == "":
 				continue
 			var from := view.node_position(view.current)

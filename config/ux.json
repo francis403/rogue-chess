@@ -10,7 +10,7 @@
 		"reduced_motion": false,
 		"screen_shake": true,
 		"window_mode": "fullscreen",
-		"ui_scale": 1.0
+		"large_text": false
 	},
 	"anim_speeds": {
 		"normal": 1.0,
@@ -82,7 +82,7 @@
 			"glow": 0.5,
 			"reveal": 0.3,
 			"screen_transition": 0.22,
-			"map_travel": 0.6,
+			"map_travel": 0.48,
 			"chosen_pause": 0.22,
 			"taken_pause": 0.3,
 			"unlock_delay": 0.2,
@@ -141,6 +141,7 @@
 			"piece_land_medium": {"db": -3, "variants": 3},
 			"piece_land_heavy": {"db": -2, "variants": 3},
 			"capture": {"db": -1, "variants": 3},
+			"capture_against": {"db": -2, "variants": 3},
 			"shield_block": {"db": -3, "pitch": 0.03},
 			"explosion": {"db": 0, "pitch": 0.04, "cooldown_ms": 120},
 			"fire_ignite": {"db": -3},
@@ -148,6 +149,7 @@
 			"fire_burnout": {"db": -3},
 			"promotion": {"db": -3, "pitch": 0},
 			"check": {"db": -3, "pitch": 0, "cooldown_ms": 250},
+			"check_stay": {"db": -4, "pitch": 0, "cooldown_ms": 250},
 			"escape": {"db": -4, "pitch": 0.01},
 			"score_tick": {"db": -8, "pitch": 0.03, "cooldown_ms": 70},
 			"energy_spend": {"db": -9},

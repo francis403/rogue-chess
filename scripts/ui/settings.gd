@@ -1,6 +1,6 @@
 extends Node
 ## Autoload "Settings": player comfort settings (volumes, mute, animation speed,
-## reduced motion, screen shake, window mode, UI scale) and key bindings, saved to
+## reduced motion, screen shake, window mode, large text) and key bindings, saved to
 ## user://settings.json. Defaults live in config/ux.json ("settings_defaults", "input").
 ## Game actions (rc_*) are registered in the InputMap here at startup; a player's
 ## rebinding is saved under "bindings" (action -> physical keycode) and replaces
@@ -17,8 +17,6 @@ signal changed(key: String)
 const DEFAULT_PATH := "user://settings.json"
 ## Seconds without a change before a deferred save is written.
 const SAVE_DELAY := 0.3
-## UI scale options (root content_scale_factor).
-const UI_SCALES: Array[float] = [0.9, 1.0, 1.15, 1.3]
 const WINDOW_MODES: Array[String] = ["windowed", "fullscreen"]
 
 signal bindings_changed
@@ -68,7 +66,6 @@ func load_from(new_path: String) -> void:
 				if input_actions().has(action) and saved_bindings[action] is float:
 					_bindings[action] = int(saved_bindings[action])
 	_register_actions()
-	_apply_ui_scale()
 	for key: String in _values:
 		changed.emit(key)
 
@@ -87,9 +84,7 @@ func set_value(key: String, value: Variant, save_now: bool = true) -> void:
 	if _values[key] == value:
 		return
 	_values[key] = value
-	if key == "ui_scale":
-		_apply_ui_scale()
-	elif key == "window_mode":
+	if key == "window_mode":
 		_apply_window_mode()
 	if save_now:
 		save()
@@ -142,11 +137,6 @@ func reduced_motion() -> bool:
 
 func screen_shake() -> bool:
 	return bool(_values["screen_shake"]) and not reduced_motion()
-
-
-func _apply_ui_scale() -> void:
-	if is_inside_tree():
-		get_tree().root.content_scale_factor = float(_values["ui_scale"])
 
 
 func _apply_window_mode() -> void:

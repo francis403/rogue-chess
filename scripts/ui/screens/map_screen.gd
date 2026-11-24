@@ -5,6 +5,7 @@ extends Control
 
 var _map_view: MapView
 var _detail: VBoxContainer
+var _stops_scroll: ScrollContainer
 var _has_chosen: bool = false
 
 
@@ -49,11 +50,41 @@ func _side_panel() -> PanelContainer:
 	header.add_child(Ui.label("Choose your next stop", "H2"))
 	header.add_child(Ui.wrapped("Climb %d floors; the boss waits at the top. Glowing nodes are your next stops: click one, or press its number key." % Game.run.map.floors(), "Body", 280))
 	column.add_child(header)
+	# The stop cards scroll in the room left between the header and the legend,
+	# so the side panel never grows taller than the window (Large text, three
+	# stops) and never sets the map's height: that comes from the window alone.
+	# The scroll window is cut to whole cards (_fit_stops).
+	var holder := Control.new()
+	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_stops_scroll = ScrollContainer.new()
+	_stops_scroll.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	_stops_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_stops_scroll.focus_mode = Control.FOCUS_NONE
 	_detail = Ui.vbox(Metrics.S)
-	column.add_child(_detail)
-	column.add_child(Ui.spacer())
+	_detail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_stops_scroll.add_child(_detail)
+	holder.add_child(_stops_scroll)
+	holder.resized.connect(_fit_stops)
+	_detail.resized.connect(_fit_stops)
+	column.add_child(holder)
 	column.add_child(_legend())
 	return panel
+
+
+## The stops' window shows as many whole cards (and the eyebrow) as its room
+## holds; the scroll bar says there are more.
+func _fit_stops() -> void:
+	var holder := _stops_scroll.get_parent() as Control
+	var room := holder.size.y
+	var bottom := 0.0
+	for child: Control in _detail.get_children():
+		if child.is_queued_for_deletion():
+			continue
+		var end := child.position.y + child.size.y
+		if end > room + 0.5:
+			break
+		bottom = end
+	_stops_scroll.offset_bottom = bottom if bottom > 0.0 else room
 
 
 ## Node types on the left, node states on the right.

@@ -122,6 +122,7 @@ func _removal(offers: Dictionary) -> VBoxContainer:
 	column.add_child(Ui.wrapped("Thin your deck so your best cards come up more often. Minimum %d cards." % int(GameConfig.value("economy", "min_deck_size")), "Body", 220))
 	var price: int = offers["remove_price"]
 	var button := Ui.button("Choose a card · %d pt" % price)
+	Ui.fix_width(button, [button.text, "Done for this visit"])
 	button.tooltip_text = "Pick one card to remove from your deck for good (%d pt). Esc cancels." % price
 	if offers["removes_left"] <= 0:
 		button.text = "Done for this visit"
@@ -140,13 +141,15 @@ func _removal(offers: Dictionary) -> VBoxContainer:
 func _buy_button(offer: Dictionary, buy: Callable, item: Control) -> Button:
 	var button := Ui.button("Buy · %d pt" % offer["price"], "Button")
 	button.set_meta("sfx", "none")
+	# As wide as its widest state, so a purchase elsewhere never reflows the row.
+	Ui.fix_width(button, [button.text, _cant_afford(offer["price"]), "Sold"])
 	var details := Ui.card_tooltip(offer["card"]) if offer.has("card") else Ui.piece_tooltip(offer["piece"])
 	button.tooltip_text = "%s\nBuy for %d training points" % [details, offer["price"]]
 	if offer["sold"]:
 		button.text = "Sold"
 		button.disabled = true
 	elif Game.run.points < offer["price"]:
-		button.text = "%d pt · can't afford" % offer["price"]
+		button.text = _cant_afford(offer["price"])
 		button.disabled = true
 		button.tooltip_text = "%s\nNot enough points: you have %d" % [details, Game.run.points]
 	button.pressed.connect(func() -> void:
@@ -156,6 +159,10 @@ func _buy_button(offer: Dictionary, buy: Callable, item: Control) -> Button:
 		_apply(buy.call(), "Bought %s" % _item_name(offer), button, item))
 	_offer_buttons.append(button)
 	return button
+
+
+static func _cant_afford(price: int) -> String:
+	return "%d pt · can't afford" % price
 
 
 func _item_name(offer: Dictionary) -> String:

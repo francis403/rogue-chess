@@ -14,6 +14,12 @@ const SIZE := Vector2(104, 146)
 const SMALL_BACK := Vector2(24, 34)
 ## Smallest text on a card (px at 1280x720).
 const MIN_FONT := 12
+## Cost coin, laid out for SIZE (scaled with the card): centre and outer radius.
+const COIN_CENTRE := 17.0
+const COIN_RADIUS := 12.5
+## Upgrade ribbon: text padding on each side and its gap to the card's right edge.
+const RIBBON_PAD := 4.0
+const RIBBON_EDGE := 4.0
 
 var card: CardData
 var is_back: bool = false
@@ -32,6 +38,12 @@ var is_highlighted: bool = false:
 var is_interactive: bool = true
 ## Not interactive, but still shows its tooltip on hover (read-only lists).
 var is_inspectable: bool = false
+## Draws the cost coin. Turn it off on mini cards too small for a readable
+## figure (the roster's opponent deck): the cost is then in the tooltip only.
+var show_cost: bool = true:
+	set(value):
+		show_cost = value
+		queue_redraw()
 ## Small key cap drawn in the bottom-left corner ("" = none).
 var key_hint: String = ""
 ## Seconds to wait before dealing in from the deck side (-1 = no deal-in).
@@ -162,7 +174,8 @@ func _draw() -> void:
 	draw_rect(rect.grow(-5 * _scale()), Palette.RULE_SOFT, false, 1.0)
 	_draw_glyph(rect)
 	_draw_name(rect)
-	_draw_cost(rect)
+	if show_cost:
+		_draw_cost(rect)
 	_draw_ribbon(rect)
 	if card.is_rare():
 		_draw_rare_mark(rect.position + Vector2(rect.size.x / 2.0, rect.size.y - 7 * _scale()))
@@ -207,13 +220,8 @@ func _scale() -> float:
 
 func _draw_glyph(rect: Rect2) -> void:
 	var centre := rect.position + Vector2(rect.size.x / 2.0, rect.size.y * 0.46)
+	# Same size and place on every card, ribbon or not (the ribbon may overlap its rim).
 	var radius := rect.size.x * 0.3
-	var ribbon := _ribbon_rect(rect)
-	if ribbon.has_area() and ribbon.end.y + 2.0 > centre.y - radius:
-		# Small card, ribbon under the coin: the glyph fits between the ribbon and the name.
-		var name_top := rect.end.y - 16 * _scale() - MIN_FONT
-		radius = minf(radius, (name_top - ribbon.end.y - 4.0) / 2.0)
-		centre.y = ribbon.end.y + 2.0 + radius
 	var ink := Palette.IVORY_SOFT if is_playable else Palette.IVORY_MUTED
 	draw_circle(centre, radius, Palette.WALNUT_INSET)
 	draw_arc(centre, radius, 0, TAU, 40, Palette.RULE if is_playable else Palette.RULE_SOFT, 1.0, true)
@@ -250,10 +258,10 @@ func _draw_name(rect: Rect2) -> void:
 ## A brass coin when affordable and playable; a hollow coin when not.
 func _draw_cost(rect: Rect2) -> void:
 	var scale_factor := _scale()
-	var at := rect.position + Vector2(17, 17) * scale_factor
+	var at := rect.position + Vector2.ONE * COIN_CENTRE * scale_factor
 	var coin := Palette.FELT if card.upgrade == "cheaper" else Palette.BRASS
 	var ink := Palette.BRASS_INK
-	draw_circle(at, 12.5 * scale_factor, Palette.WALNUT_DEEP)
+	draw_circle(at, COIN_RADIUS * scale_factor, Palette.WALNUT_DEEP)
 	if is_playable:
 		draw_circle(at, 11 * scale_factor, coin)
 	else:
@@ -284,21 +292,23 @@ func _draw_ribbon(rect: Rect2) -> void:
 	var font := UiFonts.numbers()
 	var font_size := _ribbon_font_size()
 	draw_style_box(UiTheme.shared_box(Palette.BRASS if is_playable else Color(Palette.BRASS, 0.45), Color.TRANSPARENT, 3, 0), ribbon)
-	draw_string(font, Vector2(ribbon.position.x + 5, ribbon.get_center().y + font.get_ascent(font_size) * 0.4), _ribbon_text(),
+	draw_string(font, Vector2(ribbon.position.x + RIBBON_PAD, ribbon.get_center().y + font.get_ascent(font_size) * 0.4), _ribbon_text(),
 		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Palette.BRASS_INK)
 
 
-## Where the upgrade ribbon goes (an empty rect without an upgrade): top right, or
-## below the cost coin on small cards, where it would cover the coin.
+## Where the upgrade ribbon goes (an empty rect without an upgrade): top right,
+## beside the cost coin; on a card too narrow for that, under the coin (left
+## aligned with it, over the glyph circle's rim). The glyph never shrinks for it.
 func _ribbon_rect(rect: Rect2) -> Rect2:
 	if card.upgrade == "":
 		return Rect2()
 	var scale_factor := _scale()
 	var font_size := _ribbon_font_size()
-	var width := UiFonts.numbers().get_string_size(_ribbon_text(), HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + 10
-	var ribbon := Rect2(rect.position + Vector2(rect.size.x - width - 6 * scale_factor, 9 * scale_factor), Vector2(width, font_size + 5))
-	if ribbon.position.x < rect.position.x + 31 * scale_factor:
-		ribbon.position.y = rect.position.y + 32 * scale_factor
+	var width := UiFonts.numbers().get_string_size(_ribbon_text(), HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + RIBBON_PAD * 2.0
+	var ribbon := Rect2(rect.position + Vector2(rect.size.x - width - RIBBON_EDGE * scale_factor, 9 * scale_factor), Vector2(width, font_size + 5))
+	var coin_right := (COIN_CENTRE + COIN_RADIUS + 1.0) * scale_factor if show_cost else 0.0
+	if ribbon.position.x < rect.position.x + coin_right:
+		ribbon.position = rect.position + Vector2(RIBBON_EDGE, COIN_CENTRE + COIN_RADIUS + 2.0) * scale_factor
 	return ribbon
 
 

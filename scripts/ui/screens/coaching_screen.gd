@@ -15,6 +15,7 @@ var _leave: Button
 var _panels: Array[PanelContainer] = []
 ## First button of each offer (Accept while open), for the 1-9 keys and focus after a rebuild.
 var _offer_buttons: Array[Button] = []
+var _points_before: int = 0
 
 
 func _ready() -> void:
@@ -48,6 +49,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _rebuild() -> void:
+	_points_before = Game.run.points
 	Ui.clear(_grid)
 	_panels.clear()
 	_offer_buttons.clear()
@@ -113,6 +115,7 @@ func _offer_panel(offer: Dictionary, index: int) -> PanelContainer:
 		_:
 			var accept := Ui.button("Accept · %d pt" % offer["price"], "Button")
 			accept.set_meta("sfx", "none")
+			Ui.fix_width(accept, [accept.text, "%d pt · can't afford" % offer["price"]])
 			accept.tooltip_text = "Pay %d training points: %s gets %s for the rest of the run" % [offer["price"], item_name, offer["upgrade_name"]]
 			accept.disabled = Game.run.points < offer["price"]
 			if accept.disabled:
@@ -147,7 +150,17 @@ func _is_locked(button: Button) -> bool:
 
 ## Applies an accept / decline result. `index` is the offer (it glows when an
 ## upgrade was learned); `sound` plays on success.
+## Every other offer stays open: the API allows one accept per offer (one
+## upgrade per item), not one per visit. Accepting floats "−N pt" up from the
+## item's top edge, on the toast's opaque plate, so it never smudges the glyph.
 func _apply(result: Dictionary, success_text: String, index: int = -1, sound: String = "ui_confirm") -> void:
+	# Measured before the rebuild (the rebuilt offer takes the same place): the
+	# points rise from the item's top edge, clear of its glyph and the "Accepted" chip.
+	var art: Control = _panels[index].get_child(0).get_child(0) if index >= 0 and index < _panels.size() else null
+	var from := Vector2.ZERO
+	if is_instance_valid(art):
+		from = Feel.centre_in(art, self) - Vector2(0, art.size.y / 2.0)
+	var spent := _points_before - Game.run.points
 	_rebuild()
 	_focus_offer(maxi(index, 0))
 	if not result["ok"]:
@@ -158,4 +171,6 @@ func _apply(result: Dictionary, success_text: String, index: int = -1, sound: St
 	_status.add_theme_color_override("font_color", Palette.FELT)
 	if sound == "ui_confirm" and index >= 0 and index < _panels.size():
 		Feel.glow(_panels[index])
+	if spent > 0 and from != Vector2.ZERO:
+		Feel.float_text(self, "−%d pt" % spent, from, Palette.BRASS, 0, true)
 	Game.notify_changed()

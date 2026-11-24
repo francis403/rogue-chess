@@ -34,7 +34,11 @@ var _nav_key_msec: int = -100000
 
 
 func _ready() -> void:
-	theme = UiTheme.build()
+	theme = UiTheme.build(Settings.get_value("large_text"))
+	# Large text rebuilds the theme; every screen and overlay inherits it.
+	Settings.changed.connect(func(key: String) -> void:
+		if key == "large_text":
+			theme = UiTheme.build(Settings.get_value("large_text")))
 	Game.screen_requested.connect(show_screen)
 	Game.run_changed.connect(_hud.refresh)
 	Game.settings_requested.connect(open_settings)

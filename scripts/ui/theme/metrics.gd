@@ -24,11 +24,10 @@ const BUTTON_HEIGHT_LARGE := 48
 ## Screen transition slide distance (its duration is "screen_transition" in config/ux.json).
 const TRANSITION_SLIDE := 14.0
 
-## Settings panel: one of its two columns, the choice buttons (speed / window,
-## UI scale), slider rows and the key buttons of the Controls list.
+## Settings panel: one of its two columns, the choice buttons (speed, window),
+## slider rows and the key buttons of the Controls list.
 const SETTINGS_COLUMN := 460
 const SPEED_BUTTON := 84
-const SCALE_BUTTON := 64
 const SETTINGS_LABEL := 80
 const SETTINGS_SLIDER := 240
 const SETTINGS_KEY := 96

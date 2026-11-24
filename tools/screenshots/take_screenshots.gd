@@ -11,6 +11,7 @@ extends Node
 ## user://settings.json, so it can run while GUT or the sim runs.
 ## Run (needs a window, not headless):
 ##   /Applications/Godot.app/Contents/MacOS/Godot --path . res://tools/screenshots/take_screenshots.tscn
+## Add `-- --large-text` for the base pass with Large text on (docs/screenshots/large_text/).
 
 const ShotStage := preload("res://tools/screenshots/shot_stage.gd")
 const ShotMoments := preload("res://tools/screenshots/shot_moments.gd")
@@ -41,6 +42,10 @@ func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(_temp_dir)
 	Settings.use_path(_temp_dir + "settings.json")
 	Settings.set_value("anim_speed", "normal")
+	if OS.get_cmdline_user_args().has("--large-text"):
+		await _large_text_pass()
+		return
+	_remove_pngs(OUT_DIR)
 	_remove_pngs(FRAMES_DIR)
 	await _open_stage(BASE_WINDOW, OUT_DIR, "base")
 	await _first_run()
@@ -58,6 +63,24 @@ func _ready() -> void:
 	_remove_dir(_temp_dir)
 	DirAccess.remove_absolute(TEMP_PARENT)  # only once empty
 	print("Saved %d screenshots to %s" % [_saved, ProjectSettings.globalize_path(OUT_DIR)])
+	get_tree().quit()
+
+
+## `-- --large-text`: the base 1280x720 runs only, with the Large text setting
+## on, into docs/screenshots/large_text/ (a check for clipping; no frames).
+func _large_text_pass() -> void:
+	Settings.set_value("large_text", true)
+	var dir := OUT_DIR + "large_text/"
+	_remove_pngs(dir)
+	await _open_stage(BASE_WINDOW, dir, "large_text")
+	await _first_run()
+	await _second_run()
+	await _third_run()
+	await _extras_run()
+	await _close_stage()
+	_remove_dir(_temp_dir)
+	DirAccess.remove_absolute(TEMP_PARENT)  # only once empty
+	print("Saved %d screenshots to %s" % [_saved, ProjectSettings.globalize_path(dir)])
 	get_tree().quit()
 
 
@@ -182,30 +205,6 @@ func _third_run() -> void:
 	await _shot("artifact_select")
 	_screen()._continue()
 	_go("M1")
-	await _stage.wait(ShotStage.SETTLE)
-	if await _pick_up_with_keyboard():
-		await _shot("roster_keyboard_cursor", 0.4)
-
-
-## On the roster: Enter on a benched collection row (else the king's row) picks the
-## piece up and shows the board's square cursor; Right walks it one deploy square.
-func _pick_up_with_keyboard() -> bool:
-	var rows := _screen().find_children("*", "RosterRow", true, false).filter(
-		func(row: Control) -> bool: return row.is_visible_in_tree())
-	if rows.is_empty():
-		push_warning("Screenshot tool: no roster rows for roster_keyboard_cursor")
-		return false
-	var picked: Control = rows[0]
-	for row: Control in rows:
-		if row.piece.type != "king" and _screen()._square_of(row.piece) == BoardView.NO_SQUARE:
-			picked = row
-			break
-	picked.grab_focus()
-	await _stage.key(KEY_ENTER)
-	await _stage.key(KEY_RIGHT)
-	return true
-	_screen()._continue()
-	_go("M1")
 	_screen()._start_match()
 	await _stage.wait_idle()
 	await _shot("match_artifacts_holes")
@@ -297,6 +296,7 @@ func _subset_menus() -> void:
 	Game.new_run(11)
 	await _shot("set_select")
 	Game.run.choose_piece_set("standard")
+	_skip_artifacts()
 	Game.show_phase()
 	await _stage.wait(ShotStage.SETTLE)
 	await _to_coaching()
@@ -311,6 +311,29 @@ func _subset_menus() -> void:
 	_screen()._toggle("holes")
 	_screen()._toggle("exploding")
 	await _shot("artifact_select")
+	_screen()._continue()
+	_go("M1")
+	await _stage.wait(ShotStage.SETTLE)
+	if await _pick_up_with_keyboard():
+		await _shot("roster_keyboard_cursor", 0.4)
+
+
+## On the roster: Enter on a benched collection row (else the king's row) picks the
+## piece up and shows the board's square cursor on the first free deploy square.
+func _pick_up_with_keyboard() -> bool:
+	var rows := _screen().find_children("*", "RosterRow", true, false).filter(
+		func(row: Control) -> bool: return row.is_visible_in_tree())
+	if rows.is_empty():
+		push_warning("Screenshot tool: no roster rows for roster_keyboard_cursor")
+		return false
+	var picked: Control = rows[0]
+	for row: Control in rows:
+		if row.piece.type != "king" and _screen()._square_of(row.piece) == BoardView.NO_SQUARE:
+			picked = row
+			break
+	picked.grab_focus()
+	await _stage.key(KEY_ENTER)
+	return true
 
 
 # --- Menu motion frames (base pass) ---------------------------------------------
@@ -326,11 +349,12 @@ func _menu_frames() -> void:
 	await _stage.key(KEY_F1)
 	await _stage.wait(0.5)
 
+	# Fresh meta, so the boss win at the end reveals the Fire unlock (not "Nothing new").
+	Game.use_storage(_temp_dir + "menu_frames/meta.json", _temp_dir + "menu_frames/logs/")
 	Game.new_run(11)
 	Game.run.choose_piece_set("standard")
+	_skip_artifacts()
 	Game.show_phase()
-	if _stage.main.current_screen_name == "ARTIFACT_SELECT":
-		_screen()._continue()
 	await _stage.wait(ShotStage.SETTLE)
 	_screen()._choose("L1")  # the travel marker walks to L1 (map_travel), then the roster opens
 	await _stage.frames("map_travel", 8, 0.09, FRAMES_DIR)
@@ -374,6 +398,12 @@ func _to_coaching() -> void:
 	_skip_match("L4", false)
 	_go("L5")
 	await _stage.wait(ShotStage.SETTLE)
+
+
+## Answers the artifact step with no artifacts when it shows (a loss can unlock one).
+func _skip_artifacts() -> void:
+	if Game.run.phase_name() == "ARTIFACT_SELECT":
+		Game.run.choose_artifacts([])
 
 
 func _unlock_all_artifacts() -> void:

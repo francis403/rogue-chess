@@ -142,3 +142,12 @@ func test_roster_keyboard_chooses_the_square() -> void:
 	assert_null(ui.board().token(bishop.uid), "Esc cancels: nothing placed")
 	assert_eq(ui.screen_name(), "MATCH_SETUP", "and settings did not open")
 	assert_true(ui.overlays().is_empty())
+
+
+func test_large_text_rebuilds_the_theme_at_once() -> void:
+	var body_size := func() -> int: return ui.main.theme.get_font_size("font_size", "Body")
+	assert_eq(body_size.call(), UiTheme.BODY)
+	Settings.set_value("large_text", true)
+	assert_eq(body_size.call(), UiTheme.BODY + UiTheme.LARGE_TEXT_STEP, "applied live")
+	Settings.set_value("large_text", false)
+	assert_eq(body_size.call(), UiTheme.BODY)

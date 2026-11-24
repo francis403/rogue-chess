@@ -5,7 +5,7 @@ extends Control
 ## run (during a run) and Close. Every change applies at once; slider moves are
 ## saved by the Settings autoload after a short pause, on release and on close
 ## (user://settings.json). Esc, the scrim, the settings key (F1) or Close dismiss it.
-## The body scrolls when the window is too short for it (large UI scale).
+## The body scrolls when the window is too short for it (with Large text on).
 
 const VOLUMES := [["master_volume", "Master"], ["music_volume", "Music"], ["sfx_volume", "Effects"], ["ui_volume", "Interface"]]
 ## A sound to hear the new level with once a slider rests (music is heard anyway).
@@ -28,6 +28,7 @@ var _is_closing: bool = false
 var _preview_timer: Timer
 var _preview_id: String = ""
 var _scroll: ScrollContainer
+var _panel: PanelContainer
 var _body: Control
 var _leave_row: HBoxContainer
 var _leave_confirm: HBoxContainer
@@ -53,6 +54,7 @@ func _ready() -> void:
 	centre.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(centre)
 	var panel := Ui.panel("ModalPanel")
+	_panel = panel
 	centre.add_child(panel)
 	panel.add_child(_content())
 	_preview_timer = Timer.new()
@@ -67,8 +69,25 @@ func _ready() -> void:
 	A11y.focus_all(self)
 	_release_focus = A11y.trap_focus(self)
 	A11y.focus_first([_first])
+	get_tree().process_frame.connect(func() -> void:
+		_scroll.scroll_vertical = 0
+		_scroll.follow_focus = true, CONNECT_ONE_SHOT)
 	Sfx.play("ui_open")
-	Feel.fade_in(self, "overlay_fade")
+	_animate_open(scrim)
+
+
+## The scrim fades in fast; the panel itself is opaque from the first frame (so
+## nothing behind shows through it) and settles from a slightly smaller scale.
+## Reduced motion: the scrim fade only.
+func _animate_open(scrim: Control) -> void:
+	var duration := Motion.time("overlay_fade")
+	scrim.modulate.a = 0.0
+	var tween := create_tween().set_parallel().set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tween.tween_property(scrim, "modulate:a", 1.0, duration * 0.6)
+	if not Motion.reduced():
+		_panel.scale = Vector2.ONE * ItemOverlay.OPEN_SCALE
+		tween.tween_callback(func() -> void: _panel.pivot_offset = _panel.size / 2.0)
+		tween.tween_property(_panel, "scale", Vector2.ONE, duration)
 
 
 func _content() -> VBoxContainer:
@@ -83,7 +102,10 @@ func _content() -> VBoxContainer:
 	_body.add_child(_right_column())
 	_scroll = ScrollContainer.new()
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_scroll.follow_focus = true
+	# Off while the panel opens: focusing Master before the first layout would
+	# scroll the body and hide the SOUND / DISPLAY headers (Large text). On from
+	# the next frame, so keyboard focus further down stays in view.
+	_scroll.follow_focus = false
 	_scroll.add_child(_body)
 	column.add_child(_scroll)
 	column.add_child(Ui.rule())
@@ -127,10 +149,7 @@ func _right_column() -> VBoxContainer:
 	column.custom_minimum_size.x = Metrics.SETTINGS_COLUMN
 	column.add_child(Ui.label("DISPLAY", "Eyebrow"))
 	column.add_child(_choice_row("window_mode", "Window", WINDOW_MODES, "Play %s"))
-	var scales := []
-	for scale: float in Settings.UI_SCALES:
-		scales.append([scale, "%d %%" % roundi(scale * 100.0)])
-	column.add_child(_choice_row("ui_scale", "Interface size", scales, "Draw the whole interface at %s"))
+	column.add_child(_toggle("large_text", "Large text", "Body text, captions and buttons one size larger. Headings and the board stay as they are."))
 	column.add_child(Ui.gap(Metrics.XS))
 	var heading := Ui.hbox(Metrics.S)
 	heading.add_child(Ui.label("CONTROLS", "Eyebrow"))
@@ -143,7 +162,8 @@ func _right_column() -> VBoxContainer:
 	var grid := GridContainer.new()
 	grid.columns = 4
 	grid.add_theme_constant_override("h_separation", Metrics.S)
-	grid.add_theme_constant_override("v_separation", Metrics.XS)
+	# Tight rows: the whole body fits 1280x720 at normal size with no scroll.
+	grid.add_theme_constant_override("v_separation", 2)
 	for action: String in Settings.input_actions():
 		var name_label := Ui.label(Settings.action_label(action), "Body")
 		name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -290,7 +310,7 @@ func _choice_row(key: String, text: String, options: Array, hint: String) -> HBo
 		var button := Ui.button(entry[1], "QuietButton")
 		button.toggle_mode = true
 		button.button_group = group
-		button.custom_minimum_size.x = Metrics.SPEED_BUTTON if options.size() <= 3 else Metrics.SCALE_BUTTON
+		button.custom_minimum_size.x = Metrics.SPEED_BUTTON
 		button.tooltip_text = hint % String(entry[1]).to_lower()
 		button.set_pressed_no_signal(_same(Settings.get_value(key), entry[0]))
 		button.toggled.connect(func(on: bool) -> void:

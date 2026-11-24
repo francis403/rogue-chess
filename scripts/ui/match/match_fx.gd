@@ -95,7 +95,8 @@ func apply(events: Array[Dictionary]) -> void:
 				Sfx.play("escape")
 				_on_escape(event)
 			"escape_declined":
-				Sfx.play("ui_cancel")
+				# A held, tense beat (not ui_cancel, which means "you cancelled").
+				Sfx.play("check_stay" if Sfx.has_sound("check_stay") else "turn_opponent")
 				_show_toast("%s %s in check" % [names[event["side"]], "stay" if event["side"] == PLAYER else "stays"], Palette.IVORY_SOFT)
 			"move":
 				await _animate_move(event)
@@ -149,7 +150,8 @@ func _on_turn_start(event: Dictionary) -> void:
 	view.turn_caption.text = "Round %d of %d" % [event["round"], game.max_rounds()]
 	view.sync_opponent_hand()
 	view.sync_penalties()
-	Feel.pop(view.turn_label, 1.08, "pop")
+	# No pop on the turn label: the opaque banner covers it, and a scaled label
+	# poked out past the banner's left edge (critique 3).
 	Sfx.play("turn_player" if side == PLAYER else "turn_opponent")
 	_clear_floats()
 	_show_turn_banner(side)
@@ -448,7 +450,11 @@ func _kill_check_pulse() -> void:
 	_check_pulse = null
 
 
-## A brief freeze on the impact frame (captures, explosions, check only).
+## The impact beat (captures, explosions, check only): the event sequence holds
+## for impact_hold (50 ms) before the knock-away, so the impact frame reads on
+## its own. Deliberately a beat, not a freeze of running effects: the flash and
+## ring that just opened keep growing through the hold, so it reads as the hit
+## landing rather than as a dropped frame. See UX_DECISIONS "Hit-stop".
 func _hit_stop() -> void:
 	if not Motion.reduced():
 		await wait(Motion.time("impact_hold"))
@@ -563,7 +569,7 @@ func _animate_capture(event: Dictionary) -> void:
 	var victim := view.board.forget_token(event["uid"])
 	var at := view.board.square_centre(event["square"])
 	var is_direct: bool = event["cause"] == "capture"
-	Sfx.play("capture")
+	Sfx.play(capture_sound(event["by_side"]))
 	if victim != null:
 		victim.reparent(_under())  # under the piece that took it, and clipped to the grid
 	if is_direct:
@@ -584,6 +590,11 @@ func _animate_capture(event: Dictionary) -> void:
 	if event["points"] >= HEAVY_CAPTURE_POINTS:
 		Feel.shake(view.board, 0.3, direction)
 	await wait(Motion.time("capture_beat"))
+
+
+## The opponent's captures sound darker than the player's (when that sound exists).
+static func capture_sound(by_side: int) -> String:
+	return "capture_against" if by_side == OPPONENT and Sfx.has_sound("capture_against") else "capture"
 
 
 ## The impact frame: the victim lights up and a pale flash opens on its square.

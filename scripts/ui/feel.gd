@@ -65,13 +65,19 @@ static func fade_in(node: CanvasItem, duration_name: String = "fade") -> void:
 
 ## Text that rises and fades from `at` (local to `parent`, kept inside it
 ## horizontally); it only fades with reduced motion. `font_size` 0 keeps the H2
-## size. Returns the label, which frees itself at the end.
-static func float_text(parent: Control, text: String, at: Vector2, color: Color, font_size: int = 0) -> Label:
-	var node := Ui.label(text, "H2", color)
+## size. `plated` sets it on the toast's opaque plate (for a float that starts
+## over art, like coaching's "−N pt"). Returns the node, which frees itself.
+static func float_text(parent: Control, text: String, at: Vector2, color: Color, font_size: int = 0, plated: bool = false) -> Control:
+	var text_label := Ui.label(text, "H2", color)
 	if font_size > 0:
-		node.add_theme_font_size_override("font_size", font_size)
-	node.add_theme_color_override("font_outline_color", Palette.WALNUT_DEEP)
-	node.add_theme_constant_override("outline_size", 6)
+		text_label.add_theme_font_size_override("font_size", font_size)
+	var node: Control = text_label
+	if plated:
+		node = _plate(color)
+		node.add_child(text_label)
+	else:
+		text_label.add_theme_color_override("font_outline_color", Palette.WALNUT_DEEP)
+		text_label.add_theme_constant_override("outline_size", 6)
 	node.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	node.z_index = 20
 	parent.add_child(node)
@@ -95,13 +101,7 @@ static func float_text(parent: Control, text: String, at: Vector2, color: Color,
 ## cleanly over whatever is under it. Pops in; with reduced motion it only fades.
 ## Frees itself.
 static func toast(parent: Control, text: String, at: Vector2, color: Color = Palette.FELT) -> PanelContainer:
-	var node := PanelContainer.new()
-	var plate := UiTheme.box(Palette.WALNUT_DEEP, color, UiTheme.RADIUS_SMALL, 0)
-	plate.content_margin_left = Metrics.M
-	plate.content_margin_right = Metrics.M
-	plate.content_margin_top = Metrics.XS
-	plate.content_margin_bottom = Metrics.XS
-	node.add_theme_stylebox_override("panel", plate)
+	var node := _plate(color)
 	node.add_child(Ui.label(text, "Strong", color))
 	node.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	node.z_index = 20
@@ -114,6 +114,18 @@ static func toast(parent: Control, text: String, at: Vector2, color: Color = Pal
 	tween.tween_interval(Motion.time("status_hold"))
 	tween.tween_property(node, "modulate:a", 0.0, Motion.time("fade"))
 	tween.tween_callback(node.queue_free)
+	return node
+
+
+## The small opaque plate under toasts and plated floats: dark face, rim in `color`.
+static func _plate(color: Color) -> PanelContainer:
+	var node := PanelContainer.new()
+	var plate := UiTheme.box(Palette.WALNUT_DEEP, color, UiTheme.RADIUS_SMALL, 0)
+	plate.content_margin_left = Metrics.M
+	plate.content_margin_right = Metrics.M
+	plate.content_margin_top = Metrics.XS
+	plate.content_margin_bottom = Metrics.XS
+	node.add_theme_stylebox_override("panel", plate)
 	return node
 
 

@@ -20,12 +20,14 @@ var _opponent: Dictionary
 var _opponent_id: String = ""
 var _is_starting: bool = false
 var _cursor: SquareCursor
-var _list_fade: TextureRect
 var _list_scroll: ScrollContainer
 
 const OPPONENT_CARD := Vector2(56, 78)
-## Height of the "more below" fade at the bottom of the collection list.
-const LIST_FADE := 40
+## Gap between collection rows, and the room kept around them for the focus ring.
+const LIST_GAP := 6
+## Board tokens (and the keyboard cursor's ghost).
+const ROSTER_TOKEN := 48
+const RING_ROOM := 6
 const KING_HINT := "★ marks your king: it costs nothing, always plays and can't be benched. Click it on the board, then a square, to move it."
 
 
@@ -64,57 +66,44 @@ func _collection_panel() -> PanelContainer:
 	panel.add_child(column)
 	column.add_child(Ui.label("COLLECTION", "Eyebrow"))
 	column.add_child(_king_legend())
-	# The list scrolls; a fade at its bottom edge says "more below" instead of a
-	# row cut in half (it hides once the end is in view).
+	# The list scrolls, and its window is cut to whole rows (no row cut in half;
+	# the scroll bar says there are more).
 	var holder := Control.new()
 	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	holder.clip_contents = true
 	var scroll := ScrollContainer.new()
 	_list_scroll = scroll
-	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	scroll.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_list = Ui.vbox(6)
+	_list = Ui.vbox(LIST_GAP)
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# Room for the keyboard focus ring, which is drawn outside each row (the scroll clips).
 	var ring_room := MarginContainer.new()
 	ring_room.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	for side in ["left", "right", "top", "bottom"]:
-		ring_room.add_theme_constant_override("margin_" + side, Metrics.XS + 2)
+		ring_room.add_theme_constant_override("margin_" + side, RING_ROOM)
 	ring_room.add_child(_list)
 	scroll.add_child(ring_room)
 	holder.add_child(scroll)
-	_list_fade = TextureRect.new()
-	_list_fade.texture = _fade_texture()
-	_list_fade.stretch_mode = TextureRect.STRETCH_SCALE
-	_list_fade.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_list_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_list_fade.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	_list_fade.offset_top = -LIST_FADE
-	_list_fade.offset_right = -Metrics.M  # keep the scroll bar visible
-	holder.add_child(_list_fade)
-	scroll.get_v_scroll_bar().changed.connect(_update_fade)
-	scroll.get_v_scroll_bar().value_changed.connect(func(_value: float) -> void: _update_fade())
+	# Re-cut whenever the room or the rows change size (Large text, a theme
+	# rebuild, a new window size): the rows' real height sets the window.
+	holder.resized.connect(_fit_list)
+	_list.resized.connect(_fit_list)
 	column.add_child(holder)
 	return panel
 
 
-## Transparent at the top, the panel's own colour at the bottom.
-static func _fade_texture() -> GradientTexture2D:
-	var gradient := Gradient.new()
-	gradient.set_color(0, Color(Palette.WALNUT_RAISED, 0.0))
-	gradient.set_color(1, Palette.WALNUT_RAISED)
-	var texture := GradientTexture2D.new()
-	texture.gradient = gradient
-	texture.fill_from = Vector2(0, 0)
-	texture.fill_to = Vector2(0, 1)
-	texture.width = 4
-	texture.height = 32
-	return texture
-
-
-func _update_fade() -> void:
-	var bar := _list_scroll.get_v_scroll_bar()
-	_list_fade.visible = bar.value + bar.page < bar.max_value - 1.0
+## Sizes the list's window to as many whole rows as its room holds, measured
+## from a row's laid-out height (its minimum before the first layout).
+func _fit_list() -> void:
+	var holder := _list_scroll.get_parent() as Control
+	var rows := _list.get_children().filter(func(row: Node) -> bool: return not row.is_queued_for_deletion())
+	if rows.is_empty():
+		_list_scroll.size.y = holder.size.y
+		return
+	var first := rows[0] as Control
+	var step: float = maxf(first.size.y, first.get_combined_minimum_size().y) + LIST_GAP
+	var count := clampi(floori((holder.size.y - RING_ROOM * 2 + LIST_GAP) / step), 1, rows.size())
+	_list_scroll.offset_bottom = count * step - LIST_GAP + RING_ROOM * 2
 
 
 ## Explains the star badge on the king and the dimmed tokens of placed pieces.
@@ -155,6 +144,8 @@ func _board_column() -> VBoxContainer:
 	_cursor = SquareCursor.new()
 	_cursor.board = _board
 	_cursor.rows = _deploy_rows()
+	_cursor.can_take = _cursor_can_take
+	_cursor.moved.connect(func() -> void: _show_cursor_hint())
 	_cursor.confirmed.connect(_on_cursor_confirmed)
 	_cursor.cancelled.connect(_on_cursor_cancelled)
 	_board.add_child(_cursor)
@@ -189,7 +180,8 @@ func _board_column() -> VBoxContainer:
 func _opponent_panel() -> PanelContainer:
 	var panel := Ui.panel("RaisedPanel")
 	panel.custom_minimum_size = Vector2(280, 0)
-	var column := Ui.vbox(12)
+	# Tighter than the other columns, so the boss's longer column still fits 720p with Large text.
+	var column := Ui.vbox(Metrics.S)
 	panel.add_child(column)
 	column.add_child(Ui.label("YOUR OPPONENT", "Eyebrow"))
 	column.add_child(Ui.label(_opponent["name"], "H2"))
@@ -221,6 +213,8 @@ func _opponent_panel() -> PanelContainer:
 		var view := CardView.create(CardData.new(card_type), OPPONENT_CARD)
 		view.is_interactive = false
 		view.is_inspectable = true
+		# Too small for a ≥ 12 px cost figure: the cost is in the tooltip.
+		view.show_cost = false
 		deck.add_child(view)
 	column.add_child(deck)
 	column.add_child(Ui.label("ARTIFACTS", "Eyebrow"))
@@ -252,8 +246,7 @@ func _refresh() -> void:
 		_message.text = validation["error"]
 		_message.add_theme_color_override("font_color", Palette.OXBLOOD_INK)
 	elif _selected != null and _cursor.has_focus():
-		_message.text = "Arrows choose a square · Enter places your %s · Esc puts it back" % _selected.type
-		_message.add_theme_color_override("font_color", Palette.BRASS)
+		_show_cursor_hint()
 	elif _selected != null:
 		_message.text = "Place your %s on a highlighted square" % _selected.type
 		_message.add_theme_color_override("font_color", Palette.BRASS)
@@ -263,7 +256,7 @@ func _refresh() -> void:
 
 
 func _refresh_list() -> void:
-	_update_fade.call_deferred()
+	_fit_list.call_deferred()
 	# Rows are rebuilt: keep keyboard focus on the same piece's row.
 	var focused := (get_viewport().gui_get_focus_owner() if is_inside_tree() else null) as RosterRow
 	var focus_piece: PieceData = focused.piece if focused != null else null
@@ -324,20 +317,40 @@ func _on_row_key(piece: PieceData) -> void:
 		return
 	_selected = piece
 	Sfx.play("piece_pickup")
-	_cursor.square = square
+	_cursor.carry(piece, square)
 	_cursor.grab_focus()
 	_refresh()
+
+
+## The cursor stops only where Enter can do something: a free square, the
+## carried piece's own square, or (for a piece already on the board, like the
+## king) a placed piece to swap with. Occupied squares are skipped for a benched piece.
+func _cursor_can_take(square: Vector2i) -> bool:
+	var occupant := _piece_on(square)
+	return occupant == null or occupant == _selected or _square_of(_selected) != BoardView.NO_SQUARE
+
+
+## The message line says what Enter will do on the cursor's square.
+func _show_cursor_hint() -> void:
+	if _selected == null:
+		return
+	var occupant := _piece_on(_cursor.square)
+	var carried := Ui.piece_name(_selected.type).to_lower()
+	var action := "Enter places your %s" % carried
+	if occupant == _selected:
+		action = "Enter keeps your %s here" % carried
+	elif occupant != null:
+		action = "Enter swaps your %s with the %s" % [carried, Ui.piece_name(occupant.type).to_lower()]
+	_message.text = "Arrows choose a square · %s · Esc puts it back" % action
+	_message.add_theme_color_override("font_color", Palette.BRASS)
 
 
 func _on_cursor_confirmed(square: Vector2i) -> void:
 	var piece := _selected
 	if piece == null:
 		return
-	var occupant := _piece_on(square)
-	if occupant != null and occupant != piece:
-		Feel.refuse(_message, _message, "Square taken: pick a free square")
-		return
-	_place(piece, square)
+	# Same rules as dropping a dragged piece: place, put back, or swap.
+	_on_dropped(square, {"roster_piece": piece})
 	_focus_row(piece)
 
 
@@ -377,12 +390,12 @@ func _refresh_board() -> void:
 			zone.append(Vector2i(x, y))
 	_board.zone = zone
 	for entry in _opponent["pieces"]:
-		var token := PieceToken.create(48, PieceData.new(entry["type"]), 1)
+		var token := PieceToken.create(ROSTER_TOKEN, PieceData.new(entry["type"]), 1)
 		token.modulate.a = 0.85
 		_board.set_token("opponent_%d_%d" % [entry["square"][0], entry["square"][1]], token, Vector2i(int(entry["square"][0]), int(entry["square"][1])))
 	for entry in _roster:
 		var piece: PieceData = entry["piece"]
-		var token := PieceToken.create(48, piece)
+		var token := PieceToken.create(ROSTER_TOKEN, piece)
 		token.is_locked = piece.type == "king"
 		if piece == _selected:
 			token.modulate.a = 0.5
@@ -519,24 +532,49 @@ func _start_match() -> void:
 ## same focus shape as the menu tiles) drawn above the BoardView's tokens. Arrows
 ## walk the deploy squares, Enter confirms, Esc cancels. Visible only while focused.
 class SquareCursor extends Control:
+	signal moved
 	signal confirmed(square: Vector2i)
 	signal cancelled
 
+	const GHOST_ALPHA := 0.55
+
 	var board: BoardView
 	var rows: int = 2
+	## square -> whether the cursor may stop there (set by the roster screen).
+	var can_take: Callable = func(_square: Vector2i) -> bool: return true
 	var square: Vector2i = BoardView.NO_SQUARE:
 		set(value):
 			square = value
+			_place_ghost()
 			queue_redraw()
+	var _ghost: PieceToken
+
+	## Starts carrying `piece` (shown as a translucent ghost token) from `start`.
+	func carry(piece: PieceData, start: Vector2i) -> void:
+		if is_instance_valid(_ghost):
+			_ghost.queue_free()
+		_ghost = PieceToken.create(ROSTER_TOKEN, piece)
+		_ghost.modulate.a = GHOST_ALPHA
+		_ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_ghost)
+		square = start
+
+	func _place_ghost() -> void:
+		if not is_instance_valid(_ghost):
+			return
+		_ghost.visible = has_focus() and board.contains_square(square)
+		if _ghost.visible:
+			_ghost.position = board.square_centre(square) - _ghost.size / 2.0
 
 	func _ready() -> void:
 		set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 		focus_mode = Control.FOCUS_ALL
 		z_index = 1
-		focus_entered.connect(queue_redraw)
-		focus_exited.connect(queue_redraw)
-		board.resized.connect(queue_redraw)
+		for update: Signal in [focus_entered, focus_exited, board.resized]:
+			update.connect(func() -> void:
+				_place_ghost()
+				queue_redraw())
 
 	func _gui_input(event: InputEvent) -> void:
 		var step := Vector2i.ZERO
@@ -559,10 +597,15 @@ class SquareCursor extends Control:
 		else:
 			return
 		accept_event()
+		# Steps past squares it can't stop on (e.g. taken ones for a benched piece).
 		var next := square + step
-		if next.x >= 0 and next.x < board.board_size and next.y >= 0 and next.y < rows:
-			square = next
-			Sfx.play("ui_hover")
+		while next.x >= 0 and next.x < board.board_size and next.y >= 0 and next.y < rows:
+			if can_take.call(next):
+				square = next
+				Sfx.play("ui_hover")
+				moved.emit()
+				return
+			next += step
 
 	func _draw() -> void:
 		if has_focus() and board.contains_square(square):

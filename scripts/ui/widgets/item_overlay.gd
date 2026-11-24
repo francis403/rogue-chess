@@ -50,14 +50,19 @@ func _ready() -> void:
 	_animate(true)
 
 
-## Open: the overlay fades in and the panel grows from OPEN_SCALE to full size.
-## Close: the reverse. Reduced motion keeps only the fade.
+## Open: the scrim fades in fast while the panel, opaque from the first frame
+## (so a faint title never floats over the screen behind), grows from
+## OPEN_SCALE to full size. Close: the whole overlay fades and shrinks back.
+## Reduced motion keeps only the fades.
 func _animate(opening: bool) -> Tween:
 	var duration := Motion.time("overlay_fade")
-	if opening:
-		modulate.a = 0.0
 	var tween := create_tween().set_parallel().set_ease(Tween.EASE_OUT if opening else Tween.EASE_IN).set_trans(Tween.TRANS_CUBIC)
-	tween.tween_property(self, "modulate:a", 1.0 if opening else 0.0, duration)
+	if opening:
+		var scrim: Control = get_child(0)
+		scrim.modulate.a = 0.0
+		tween.tween_property(scrim, "modulate:a", 1.0, duration * 0.6)
+	else:
+		tween.tween_property(self, "modulate:a", 0.0, duration)
 	if not Motion.reduced():
 		if opening:
 			_panel.scale = Vector2.ONE * OPEN_SCALE

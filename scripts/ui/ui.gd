@@ -2,6 +2,11 @@ class_name Ui
 extends RefCounted
 ## Small builders shared by every screen (feedback tweens are in Feel).
 
+## Share of a taller window's extra height a frame puts above its header.
+const FRAME_TOP_SHARE := 0.75
+## How much more of a frame body's free height goes above a centred block than below.
+const BLOCK_ABOVE_RATIO := 1.5
+
 
 static func label(text: String, variation: String = "", color: Variant = null) -> Label:
 	var node := Label.new()
@@ -27,6 +32,21 @@ static func button(text: String, variation: String = "Button") -> Button:
 	node.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	node.focus_mode = Control.FOCUS_NONE
 	return node
+
+
+## Keeps `node` as wide as the widest of `texts` in its current font (all the
+## states its label can take), so a state change never reflows the row it sits
+## in. Re-measured when the theme changes (Large text).
+static func fix_width(node: Button, texts: Array[String]) -> void:
+	var fit := func() -> void:
+		var font := node.get_theme_font("font")
+		var font_size := node.get_theme_font_size("font_size")
+		var widest := 0.0
+		for text in texts:
+			widest = maxf(widest, font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x)
+		node.custom_minimum_size.x = ceilf(widest + node.get_theme_stylebox("normal").get_minimum_size().x)
+	node.ready.connect(fit)
+	node.theme_changed.connect(fit)
 
 
 ## Connects a one-shot button: it disables itself on the first press, so a
@@ -155,7 +175,9 @@ static func frame(screen: Control, eyebrow: String, title: String, subtitle: Str
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "right"]:
 		margin.add_theme_constant_override("margin_" + side, Metrics.SCREEN_X)
-	centre_tall(margin)
+	# Most of a taller window's extra height goes above the header: the content
+	# block below sits lower, so the bottom doesn't end in a wide empty band.
+	centre_tall(margin, FRAME_TOP_SHARE)
 	screen.add_child(margin)
 	var column := vbox(Metrics.XL)
 	margin.add_child(column)
@@ -171,14 +193,16 @@ static func frame(screen: Control, eyebrow: String, title: String, subtitle: Str
 	return body
 
 
-## Top and bottom margins of a screen: Metrics.SCREEN_Y, plus half of whatever the
-## canvas is taller than the 720 base (16:10 windows), so menu screens keep their
-## 16:9 layout centred instead of leaving a band of empty space at the bottom.
-static func centre_tall(margin: MarginContainer) -> void:
+## Top and bottom margins of a screen: Metrics.SCREEN_Y, plus whatever the canvas
+## is taller than the 720 base (16:10 windows), `top_share` of it above and the
+## rest below, so menu screens keep their 16:9 layout instead of leaving a band
+## of empty space at the bottom.
+static func centre_tall(margin: MarginContainer, top_share: float = 0.5) -> void:
 	var fit := func() -> void:
-		var extra := maxi(int(margin.get_viewport_rect().size.y) - Metrics.BASE_HEIGHT, 0) / 2
-		for side in ["top", "bottom"]:
-			margin.add_theme_constant_override("margin_" + side, Metrics.SCREEN_Y + extra)
+		var extra := maxi(int(margin.get_viewport_rect().size.y) - Metrics.BASE_HEIGHT, 0)
+		var top := roundi(extra * top_share)
+		margin.add_theme_constant_override("margin_top", Metrics.SCREEN_Y + top)
+		margin.add_theme_constant_override("margin_bottom", Metrics.SCREEN_Y + extra - top)
 	for side in ["top", "bottom"]:
 		margin.add_theme_constant_override("margin_" + side, Metrics.SCREEN_Y)
 	margin.resized.connect(fit)
@@ -203,11 +227,15 @@ static func rule(color: Color = Palette.RULE) -> ColorRect:
 	return node
 
 
-## A block centred vertically in a frame body (equal space above and below), so
+## A block centred vertically in a frame body (a little more space above than
+## below, BLOCK_ABOVE_RATIO), so
 ## menu content sits in the middle of the screen with its actions right under it.
 ## Add rows with SIZE_SHRINK_CENTER (or Ui.centered) to centre them horizontally.
 static func centre_block(body: VBoxContainer, separation: int = Metrics.XL) -> VBoxContainer:
-	body.add_child(spacer())
+	# A little more room above than below: the header already weighs the top.
+	var above := spacer()
+	above.size_flags_stretch_ratio = BLOCK_ABOVE_RATIO
+	body.add_child(above)
 	var block := vbox(separation)
 	block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.add_child(block)

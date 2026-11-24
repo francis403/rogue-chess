@@ -59,6 +59,9 @@ func _set_tile(piece_set: Dictionary, index: int) -> SelectTile:
 	title.add_child(Ui.key_cap(str(index + 1)))
 	column.add_child(title)
 	column.add_child(_worth_table(piece_set))
+	# The rules sit in the middle of the space left, so a shorter list (Standard)
+	# leaves even room above and below instead of a block of empty tile.
+	column.add_child(Ui.spacer())
 	column.add_child(_rule_lines(piece_set["id"]))
 	column.add_child(Ui.spacer())
 	column.add_child(Ui.rule(Palette.RULE_SOFT))

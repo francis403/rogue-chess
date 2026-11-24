@@ -551,6 +551,12 @@ def piece_land_light(v=0):
 def piece_land_medium(v=0):
     x = knock(400 * vr(v), 0.3, 0.05 * (1.0, 1.1, 0.92)[v], seed=vs(47, v))
     add(x, felt_thud(0.1, vs(48, v), 350), 0.0, 0.7)
+    if v == 1:
+        # At 380 Hz the knock's second mode (x2.57 = 977 Hz) drops just under 1 kHz, so this
+        # variant measured -19.2 dB presence against about -11 for its siblings and sounded
+        # duller on laptops. A dry 1.24 kHz snap (as on piece_land_heavy) restores the attack;
+        # the pitch, decay and body stay the variant's own.
+        add(x, snap(1300 * vr(v), vs(148, v), 0.01), 0.0, 1.1)
     return finish(x)
 
 
@@ -574,6 +580,23 @@ def capture(v=0):
         add(x, knock(rng.uniform(500, 620), 0.12, 0.02, seed=rng.randrange(1000), click=0.2), t, gain)
         t += rng.uniform(0.045, 0.075) * (1.0 - gain)
     return finish(reverb(x, 0.12, tail=0.2))
+
+
+def capture_against(v=0):
+    """The opponent took your piece: the capture family a fourth lower and darker. A deeper
+    knock, a heavier felt thud, a low falling thump, the piece rattling away on a duller,
+    shorter path, and a muted 1.45 kHz snap (instead of capture's 1.9 kHz) so it still
+    reads on laptop speakers without the bright edge of your own capture."""
+    x = knock(225 * vr(v), 0.45, 0.09, seed=vs(251, v), click=0.25)
+    add(x, felt_thud(0.18, vs(252, v), 300), 0.0, 1.0)
+    add(x, mul(glide(85 * vr(v), 58 * vr(v), 0.32), env_perc(0.32, 0.002, 0.09)), 0.0, 0.5)
+    add(x, lowpass(snap(1450 * vr(v), vs(253, v), 0.012), 2600), 0.0, 1.5)
+    rng = random.Random(vs(254, v))
+    t = 0.13
+    for gain in (0.35, 0.22, 0.12, 0.06):
+        add(x, knock(rng.uniform(360, 450), 0.12, 0.022, seed=rng.randrange(1000), click=0.15), t, gain)
+        t += rng.uniform(0.05, 0.08) * (1.0 - gain)
+    return finish(reverb(lowpass(x, 3000), 0.12, tail=0.2))
 
 
 def shield_block():
@@ -645,6 +668,28 @@ def check():
     # laptop speakers; it decays in ~0.15 s so the swell underneath stays the message.
     add(x, bell(hz(86), 0.5, 0.15, 0.5, attack=0.002), 0.0, 0.3)
     return finish(reverb(x, 0.15, tail=0.3), fade_out=0.1)
+
+
+def check_stay():
+    """A side stays in check instead of escaping: a short, low, held tension. A clamp-like
+    felt knock, then the check's own minor-second dyad (D3/Eb3, beating) held flat for
+    ~0.35 s and cut off, not resolved. Presence: a muted D6 tick on the attack (check's
+    ping, shorter and lower in the mix). No falling interval and no bells, so it is never
+    mistaken for ui_cancel."""
+    dur = 0.5
+    n = frames(dur)
+    tone = [0.0] * n
+    for f in (hz(50), hz(51)):
+        w = TAU * f / SR
+        for i in range(n):
+            tone[i] += sum(math.sin(h * w * i) / h for h in range(1, 7))
+    hold = [min(1.0, i / frames(0.02)) * (1.0 if i < frames(0.36) else max(0.0, 1.0 - (i - frames(0.36)) / frames(0.12)))
+            for i in range(n)]
+    x = scale(mul(lowpass(tone, 900), hold), 0.35)
+    add(x, knock(150, 0.25, 0.04, seed=68, click=0.15), 0.0, 0.7)
+    add(x, felt_thud(0.1, 69, 300), 0.0, 0.6)
+    add(x, lowpass(knock(1175, 0.06, 0.012, seed=70, click=0.3), 2400), 0.0, 1.3)
+    return finish(x, fade_out=0.06)
 
 
 def escape():
@@ -996,7 +1041,8 @@ def music_match():
 SFX = [ui_hover, ui_click, ui_confirm, ui_cancel, ui_error, ui_purchase, ui_toggle, ui_open, ui_close,
        card_draw, card_shuffle, card_play, card_discard, card_select, card_hover,
        piece_pickup, piece_move, piece_land_light, piece_land_medium, piece_land_heavy, capture,
-       shield_block, explosion, fire_ignite, fire_burn, fire_burnout, promotion, check, escape,
+       capture_against, shield_block, explosion, fire_ignite, fire_burn, fire_burnout, promotion, check,
+       check_stay, escape,
        score_tick, energy_spend, energy_refill, turn_player, turn_opponent,
        victory, defeat, run_victory, run_defeat, unlock_fanfare,
        map_travel, screen_transition, reward_reveal]
@@ -1004,7 +1050,8 @@ MUSIC = [music_menu, music_match]
 # Sounds that play many times a minute get 3 variants: <id>.wav, <id>_2.wav, <id>_3.wav.
 # Keep in sync with config/ux.json audio.sounds[id].variants (check.py verifies the files).
 VARIANTS = {ui_hover: 3, ui_click: 3, card_draw: 3, card_hover: 3, piece_pickup: 3, piece_move: 3,
-            piece_land_light: 3, piece_land_medium: 3, piece_land_heavy: 3, capture: 3}
+            piece_land_light: 3, piece_land_medium: 3, piece_land_heavy: 3, capture: 3,
+            capture_against: 3}
 
 
 def main(only):

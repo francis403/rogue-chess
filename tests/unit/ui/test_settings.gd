@@ -113,17 +113,33 @@ func test_unknown_speed_name_plays_at_normal_speed() -> void:
 
 # --- Display and shake ------------------------------------------------------------
 
-func test_ui_scale_and_screen_shake_persist_and_apply() -> void:
-	Settings.set_value("ui_scale", 1.15)
+func test_large_text_and_screen_shake_persist() -> void:
+	Settings.set_value("large_text", true)
 	Settings.set_value("screen_shake", false)
-	assert_almost_eq(get_tree().root.content_scale_factor, 1.15, 0.001, "applied at once")
 	Settings.load_from(TMP_DIR + "missing.json")
-	assert_almost_eq(get_tree().root.content_scale_factor, 1.0, 0.001, "defaults in between")
+	assert_false(Settings.get_value("large_text"), "defaults in between")
 	assert_true(Settings.screen_shake())
 	Settings.load_from(TMP_SETTINGS)
-	assert_almost_eq(float(Settings.get_value("ui_scale")), 1.15, 0.001)
-	assert_almost_eq(get_tree().root.content_scale_factor, 1.15, 0.001, "applied on load")
+	assert_true(Settings.get_value("large_text"))
 	assert_false(Settings.screen_shake())
+
+
+func test_an_old_ui_scale_key_is_ignored() -> void:
+	_write('{"ui_scale": 1.3, "large_text": true}')
+	Settings.load_from(TMP_SETTINGS)
+	assert_true(Settings.get_value("large_text"))
+	assert_false(Settings.defaults().has("ui_scale"))
+	assert_almost_eq(get_tree().root.content_scale_factor, 1.0, 0.001, "the canvas is never scaled")
+
+
+func test_large_text_theme_raises_body_and_caption_only() -> void:
+	var normal := UiTheme.build(false)
+	var large := UiTheme.build(true)
+	for variation in ["Body", "Caption", "Eyebrow"]:
+		assert_eq(large.get_font_size("font_size", variation), normal.get_font_size("font_size", variation) + UiTheme.LARGE_TEXT_STEP, variation)
+	assert_eq(large.get_font_size("font_size", "Button"), UiTheme.BODY + UiTheme.LARGE_TEXT_STEP)
+	for variation in ["H1", "H2", "Title", "Strong", "StatLarge"]:
+		assert_eq(large.get_font_size("font_size", variation), normal.get_font_size("font_size", variation), variation + " keeps its size")
 
 
 func test_reduced_motion_also_stops_screen_shake() -> void:

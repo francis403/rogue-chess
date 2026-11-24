@@ -37,11 +37,12 @@ LOUDNESS_TOLERANCE_DB = 0.6   # (peak capping may leave a very spiky sound sligh
 STINGERS = {"victory", "defeat", "run_victory", "run_defeat", "unlock_fanfare"}
 # Dark sounds that carry information and must still read on laptop speakers (roll-off
 # below ~250 Hz): at least this much of their attack's energy (first 100 ms) sits in
-# 1-4 kHz. Impacts (iteration 2), plus the refusal/cancel cues and "your turn"
-# (iteration 3). Left out on purpose (see README): turn_opponent (a deliberately
-# background tap, always with the banner and the opponent's own move sounds) and the
-# stingers (musical phrases with their melody at 330-880 Hz, always with a full screen).
-LAPTOP = {"capture", "explosion", "check", "piece_land_heavy", "ui_error", "ui_cancel", "turn_player"}
+# 1-4 kHz. Impacts (iteration 2), the refusal/cancel cues and "your turn" (iteration 3),
+# and the opponent's capture and "stays in check" (iteration 4). Left out on purpose
+# (see README): turn_opponent (a deliberately background tap, always with the banner
+# and the opponent's own move sounds) and the stingers (musical phrases with their melody at 330-880 Hz, always with a full screen).
+LAPTOP = {"capture", "explosion", "check", "piece_land_heavy", "ui_error", "ui_cancel", "turn_player",
+          "capture_against", "check_stay"}
 MIN_PRESENCE_DB = -14.5      # iteration 1 had -19.6 (capture) to -25.9 (check); ui_error was -33.7
 CONFIG = os.path.join(ROOT, "config", "ux.json")
 

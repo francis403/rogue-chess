@@ -11,6 +11,8 @@ const END_TURN_STUCK := "End turn · nothing to play"
 ## Width of the KEYS list's key column, and the room a button keeps for its key cap.
 const KEY_COLUMN := 110.0
 const KEY_CAP_ROOM := 34.0
+## Spare height the KEYS list needs before it comes back (see _fit_keys).
+const KEYS_SLACK := float(Metrics.XL)
 
 var game: ChessMatch
 var names: Array[String] = []
@@ -48,6 +50,9 @@ var escape_cost_label: Label
 var escape_keys_label: Label
 ## The keyboard reference under the hint (hidden while the check prompt is up).
 var keys_box: VBoxContainer
+## Holds keys_box; _fit_keys() hides it when the window has no room for it.
+var _keys_room: VBoxContainer
+var _margin: MarginContainer
 var stay_button: Button
 var _redraw_cap: Label
 var _end_turn_cap: Label
@@ -78,6 +83,9 @@ func build(root: Control) -> void:
 	for side in ["left", "right", "top", "bottom"]:
 		margin.add_theme_constant_override("margin_" + side, Metrics.L)
 	root.add_child(margin)
+	_margin = margin
+	root.resized.connect(_fit_keys)
+	margin.minimum_size_changed.connect(_fit_keys)
 	var row := Ui.hbox(Metrics.L)
 	margin.add_child(row)
 	row.add_child(_left_column())
@@ -267,7 +275,9 @@ func _desk_panel() -> PanelContainer:
 	column.add_child(_hint_row())
 	# A check replaces the hint and the keys in place, so nothing below it moves.
 	column.add_child(_escape_panel())
-	column.add_child(_keys_box())
+	_keys_room = Ui.vbox(0)
+	_keys_room.add_child(_keys_box())
+	column.add_child(_keys_room)
 	column.add_child(Ui.spacer())
 	column.add_child(Ui.rule(Palette.RULE_SOFT))
 	column.add_child(_piles_row())
@@ -295,8 +305,26 @@ func _piles_row() -> HBoxContainer:
 ## The match's keys, one per line: key caps on the left, what they do on the
 ## right (filled by refresh_keys from the player's bindings).
 func _keys_box() -> VBoxContainer:
-	keys_box = Ui.vbox(Metrics.XS)
+	# Tight rows, so the desk still fits 720p with Large text on.
+	keys_box = Ui.vbox(2)
 	return keys_box
+
+
+## The KEYS list only repeats the key caps on the hand and the buttons: it steps
+## aside while a long hint (or Large text) would push the desk past the window,
+## and comes back only once there is room plus KEYS_SLACK to spare (hysteresis:
+## a column whose height sits right at the limit never flickers it on and off).
+func _fit_keys() -> void:
+	(func() -> void:
+		if _keys_room == null or not is_instance_valid(_margin) or not _margin.is_inside_tree():
+			return
+		var needed := _margin.get_combined_minimum_size().y
+		# The screen's height (the margin itself grows to fit its content).
+		var room := (_margin.get_parent() as Control).size.y
+		if _keys_room.visible and needed > room + 0.5:
+			_keys_room.visible = false
+		elif not _keys_room.visible and needed + _keys_room.get_combined_minimum_size().y + Metrics.M + KEYS_SLACK <= room:
+			_keys_room.visible = true).call_deferred()
 
 
 ## The KEYS list and the button key caps, from the current bindings (call again
@@ -351,10 +379,13 @@ func _hint_row() -> HBoxContainer:
 	hint_title = Ui.label("", "Eyebrow")
 	text.add_child(hint_title)
 	hint = Ui.wrapped("", "Body", 220)
-	hint.custom_minimum_size.y = 60
+	hint.custom_minimum_size.y = 52  # two lines, also with Large text
+	hint.minimum_size_changed.connect(_fit_keys)
 	text.add_child(hint)
 	# Always in the layout (empty when not needed), so the keys below never jump.
-	hurry_label = Ui.label("", "Caption")
+	# It wraps instead of widening the column (with Large text it is wider than the
+	# column, and the board would shift sideways for the opponent's turn).
+	hurry_label = Ui.wrapped("", "Caption")
 	text.add_child(hurry_label)
 	return row
 
@@ -373,8 +404,10 @@ func _escape_panel() -> PanelContainer:
 	escape_cost_label = Ui.wrapped("", "Caption", 220)
 	escape_cost_label.add_theme_color_override("font_color", Palette.IVORY_SOFT)
 	column.add_child(escape_cost_label)
-	stay_button = Ui.button("Stay (keep the king in check)")
+	stay_button = Ui.button("Stay in check")
 	stay_button.custom_minimum_size.y = Metrics.BUTTON_HEIGHT
+	# Wraps with Large text rather than widening the column and moving the board.
+	stay_button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	stay_button.tooltip_text = "Decline the escape: your king stays where it is"
 	column.add_child(stay_button)
 	escape_keys_label = Ui.wrapped("", "Caption", 220)

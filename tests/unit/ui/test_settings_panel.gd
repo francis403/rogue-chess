@@ -213,10 +213,8 @@ func test_new_toggles_and_display_choices_save() -> void:
 	var panel: SettingsPanel = await _open_panel()
 	_toggle(panel, "Screen shake").button_pressed = false
 	assert_false(Settings.get_value("screen_shake"))
-	_speed_button(panel, "115 %").button_pressed = true
-	assert_almost_eq(float(Settings.get_value("ui_scale")), 1.15, 0.001)
-	assert_eq(_speed_button(panel, "115 %").theme_type_variation, "PrimaryButton")
-	assert_false(_speed_button(panel, "100 %").button_pressed, "scales are exclusive")
+	_toggle(panel, "Large text").button_pressed = true
+	assert_true(Settings.get_value("large_text"))
 	_speed_button(panel, "Windowed").button_pressed = true
 	assert_eq(Settings.get_value("window_mode"), "windowed")
 	panel.close()
@@ -224,9 +222,8 @@ func test_new_toggles_and_display_choices_save() -> void:
 	Settings.load_from(TMP_SETTINGS)
 	var reopened: SettingsPanel = await _open_panel()
 	assert_false(_toggle(reopened, "Screen shake").button_pressed)
-	assert_true(_speed_button(reopened, "115 %").button_pressed)
+	assert_true(_toggle(reopened, "Large text").button_pressed)
 	assert_true(_speed_button(reopened, "Windowed").button_pressed)
-	Settings.set_value("ui_scale", 1.0)
 
 
 func test_toggles_are_big_enough_to_hit() -> void:

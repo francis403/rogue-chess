@@ -113,19 +113,51 @@ func test_stay_declines_the_escape() -> void:
 
 
 ## The prompt replaces the hint in place: the screen never grows past the window,
-## so the board keeps its size and position.
+## so the board keeps its size and position. The right column has a hard width,
+## so neither the opponent turn's hurry line nor the prompt moves the board, also
+## with Large text on (critique 3).
 func test_escape_prompt_does_not_move_the_board() -> void:
+	await _board_stays_put_through_the_opponent_turn()
+
+
+func test_escape_prompt_does_not_move_the_board_with_large_text() -> void:
+	Settings.set_value("large_text", true)  # main.gd rebuilds the theme at once
+	await ui.frames(2)
+	await _board_stays_put_through_the_opponent_turn()
+	Settings.set_value("large_text", false)
+
+
+## At the 1280x720 base window (the headless one is taller), so a desk that grows
+## past the window shows up as a moved or resized board.
+func _board_stays_put_through_the_opponent_turn() -> void:
+	var window := get_tree().root
+	var old_size := window.size
+	window.size = Vector2i(1280, Metrics.BASE_HEIGHT)
+	await _check_board_stays_put()
+	window.size = old_size
+
+
+func _check_board_stays_put() -> void:
 	assert_true(await ui.show_crafted_match([["king", 2, 0], ["pawn", 5, 1]], [["king", 5, 5], ["rook", 3, 5]],
 		["move", "move", "move", "move", "move"], ["rook", "rook", "rook", "rook", "rook"]))
+	await ui.frames(2)
 	var board_before := ui.board().get_global_rect()
+	var view: MatchView = ui.screen()._view
+	var column := view.end_turn_button.get_parent() as Control
+	assert_eq(column.size.x, float(Metrics.SIDE_COLUMN), "the right column has its fixed width")
 	var scripted := ScriptedAI.new(O, 1, 0.0, RandomNumberGenerator.new())
 	scripted.rook_move = [Vector2i(3, 5), Vector2i(2, 5)]
 	ui.screen()._ai = scripted
 	assert_true(ui.press(ui.button("End turn", ui.screen())))
+	assert_true(await ui.until(func() -> bool: return view.hurry_label.text != ""), "the hurry line shows")
+	await ui.frames(2)
+	assert_eq(ui.board().get_global_rect(), board_before, "the hurry line doesn't move the board")
+	assert_eq(column.size.x, float(Metrics.SIDE_COLUMN), "nor widen the column")
 	assert_true(await ui.wait_match_idle())
 	assert_true(ui.escape_prompt_up())
 	await ui.frames(2)
 	assert_eq(ui.board().get_global_rect(), board_before, "the board neither moves nor resizes")
+	assert_eq(column.size.x, float(Metrics.SIDE_COLUMN), "the prompt doesn't widen the column")
 	assert_lte(ui.screen().get_combined_minimum_size().y, ui.screen().size.y, "the layout fits the screen")
 
 

@@ -11,7 +11,7 @@ button.set_meta("sfx_hover", "none")   # no hover tick
 ```
 
 **Also automatic (iteration 2), nothing to call:**
-- **Variants**: `Sfx.play(id)` picks one of the id's files at random and never the same one twice in a row. Ids with 3 variants: `ui_hover`, `ui_click`, `card_draw`, `card_hover`, `piece_pickup`, `piece_move`, `piece_land_light/medium/heavy`, `capture` (`config/ux.json` → `audio.sounds[id].variants`). Call sites don't change; `played` still emits the plain id. `Sfx.variant_count(id)` / `Sfx.last_variant(id)` are for tests and tools.
+- **Variants**: `Sfx.play(id)` picks one of the id's files at random and never the same one twice in a row. Ids with 3 variants: `ui_hover`, `ui_click`, `card_draw`, `card_hover`, `piece_pickup`, `piece_move`, `piece_land_light/medium/heavy`, `capture`, `capture_against` (`config/ux.json` → `audio.sounds[id].variants`). Call sites don't change; `played` still emits the plain id. `Sfx.variant_count(id)` / `Sfx.last_variant(id)` are for tests and tools.
 - **Ducking**: `victory`, `defeat`, `run_victory`, `run_defeat` and `unlock_fanfare` dip the music 5 dB (0.12 s in, held for the stinger's length, 0.9 s back; `audio.duck`). It is an Amplify effect on the Music bus, so the bus volume always equals the player's slider. `Sfx.duck_music(seconds)` does it by hand if a screen ever needs it.
 - **One stinger at a time** (iteration 3, `audio.stingers`): the same five ids are exclusive. A new stinger fades out the one still sounding over 0.3 s, and the music dip follows the new one (it is re-timed to the new stinger's end, even when that is shorter). So `run_defeat` / `run_victory` on the run-end screen replaces a `defeat` / `victory` still ringing from the match-over panel; call sites don't change. `unlock_fanfare` (`stingers.wait`) never cuts in: if a stinger is playing, `play()` queues it (and returns true) and it starts when that stinger ends. `Sfx.stinger_time_left()` gives the seconds until the playing and queued stingers have ended (0 when none), so the run-end screen can line its unlock reveal up with the fanfare. `Sfx.stop_stinger()` fades the stinger out and drops a queued one.
 - **Voice stealing**: when 8 SFX (4 UI) voices are already sounding, the oldest fades out over 15 ms on a spare player instead of being cut, so bursts (explosion + captures) don't click.
@@ -65,7 +65,8 @@ Rules of thumb:
 | `piece_pickup` | player selects a piece | `match_screen.gd` `press_square()` before `_show_selection()` when `_selected_from` changes; roster drag start |
 | `piece_move` | piece slides (`move` event) | `match_fx.gd` `_animate_move()` at tween start |
 | `piece_land_light` / `_medium` / `_heavy` | slide ends | `_animate_move()` after `await tween.finished`: pawn/knight → light, bishop/rook → medium, queen/king → heavy (`event["piece_type"]`); skip when `event["is_capture"]` (the capture sound covers it). Roster `_place()` → `piece_land_light` |
-| `capture` | `capture` event | `match_fx.gd` `_animate_capture()` |
+| `capture` | `capture` event, made by the player | `match_fx.gd` `_animate_capture()` |
+| `capture_against` | `capture` event, made by the opponent (your piece was taken): the capture family, a fourth lower and darker, 3 variants | same place, when the capturing side is the opponent; guard with `Sfx.has_sound("capture_against")` and fall back to `capture` |
 | `shield_block` | `shield_block` event | `_animate_block()` |
 | `explosion` | `explosion` event | `_animate_explosion()` (next to `Feel.shake`) |
 | `fire_ignite` | `ignite` event | `_animate_burn()` when `event["type"] == "ignite"` |
@@ -74,7 +75,7 @@ Rules of thumb:
 | `promotion` | `promotion` event | `_animate_promotion()` |
 | `check` | `check` event | `_animate_check()` |
 | `escape` | `escape` event | `match_fx.gd` `apply()` → `"escape"` / `_on_escape()` |
-| `ui_cancel` | `escape_declined` (player stays in check) | `_apply()` → `"escape_declined"` |
+| `check_stay` | `escape_declined` (a side stays in check instead of escaping): a short, low, held minor-second, unresolved | `_apply()` → `"escape_declined"`; guard with `Sfx.has_sound("check_stay")` and fall back to `ui_cancel` |
 
 ## Score, energy, turns
 

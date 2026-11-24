@@ -24,7 +24,7 @@ func _ready() -> void:
 	for artifact in run.available_artifacts():
 		grid.add_child(_artifact_tile(artifact))
 	# Tiles, status, the counter and Continue sit together in the middle.
-	var block := Ui.centre_block(body)
+	var block := Ui.centre_block(body, Metrics.M)
 	block.add_child(Ui.centered(grid))
 	_status = Ui.status_label()
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

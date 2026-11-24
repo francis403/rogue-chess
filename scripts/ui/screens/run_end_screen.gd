@@ -4,13 +4,13 @@ extends Control
 ## centred column. A win gets a brass burst behind the title and the pieces drop
 ## in; a loss is quieter: no burst, the pieces fade in and the king lies down.
 ## Sound: a run_victory / run_defeat stinger over silence (main.gd stops the music),
-## a score_tick as each figure lands, unlock_fanfare as a new unlock deals in last
-## (never before the run stinger has finished: Sfx.stinger_time_left()), then the
-## lounge loop returns. Reduced motion: no burst, drop or topple motion;
-## figures still count, panels fade.
+## a score_tick as each figure lands, and a new unlock opens with its
+## unlock_fanfare in the same moment: after the figures, and never before the run
+## stinger has rung out (Sfx.stinger_time_left()); until then its panel shows a
+## sealed emblem, so the page is never lopsided. The lounge loop returns when the
+## last stinger (run stinger, then fanfare) has ended. Reduced motion: no burst,
+## drop or topple motion; figures still count, panels fade.
 
-## Real seconds (not scaled by the animation speed): the stinger's length.
-const MUSIC_BACK_AFTER := 3.5
 const ROW_TOKEN := 40.0
 ## Big enough for a ≥ 12 px name and a readable cost coin; copies show "×N".
 const DECK_CARD := Vector2(72, 101)
@@ -18,6 +18,8 @@ const DECK_CARD := Vector2(72, 101)
 const SUMMARY_WIDTH := 760
 
 var _stats: Array[Label] = []
+## The unlock panel's sealed emblem (a new unlock only), until it opens.
+var _seal: Seal
 var _stat_targets: Array[int] = []
 var _title: Label
 
@@ -71,8 +73,16 @@ func _ready() -> void:
 	A11y.focus_all(self)
 	A11y.focus_first([again])
 	Sfx.play("run_victory" if is_win else "run_defeat", false)
-	_play(is_win, row, flourish, unlock_panel, unlock.get("is_new", false))
-	create_tween().tween_callback(Sfx.play_music.bind("music_menu")).set_delay(MUSIC_BACK_AFTER)
+	var is_new: bool = unlock.get("is_new", false)
+	_play(is_win, row, flourish, unlock_panel, is_new)
+	if not is_new:
+		_music_back_after_stingers()
+
+
+## The lounge loop comes back once the stingers sounding now (and queued) have
+## rung out: real audio seconds, so the animation speed never shortens it.
+func _music_back_after_stingers() -> void:
+	create_tween().tween_callback(Sfx.play_music.bind("music_menu")).set_delay(Sfx.stinger_time_left())
 
 
 ## The beats: (win) burst; the row drops in (a loss: fades in, then the king
@@ -80,7 +90,10 @@ func _ready() -> void:
 func _play(is_win: bool, row: PieceRow, flourish: Flourish, unlock_panel: PanelContainer, is_new: bool) -> void:
 	if is_win:
 		# After layout, so the burst centres on the title.
-		(func() -> void: flourish.burst(Feel.centre_in(_title, self), Motion.time("run_burst"))).call_deferred()
+		# After layout (so it centres on the title) and after the screen's own
+		# entrance fade, so it never shows over a half-faded title.
+		create_tween().tween_callback(func() -> void:
+			flourish.burst(Feel.centre_in(_title, self), Motion.time("run_burst"))).set_delay(Motion.time("screen_transition"))
 		row.drop_in(Motion.seconds("unlock_delay"))
 	else:
 		for token in row.tokens:
@@ -92,17 +105,26 @@ func _play(is_win: bool, row: PieceRow, flourish: Flourish, unlock_panel: PanelC
 	var stagger := Motion.seconds("run_count_stagger")
 	for i in _stats.size():
 		_count_up(_stats[i], _stat_targets[i], Settings.time(start + stagger * i))
-	var unlock_at := start + stagger * _stats.size() + Motion.seconds("run_count_up")
 	var content: Control = unlock_panel.get_child(0)
-	Feel.reveal(content.get_children(), 0.06, unlock_at)
+	# The eyebrow shows from the start (the panel keeps the page balanced); the
+	# rest of the unlock deals in when it opens.
+	var items: Array = content.get_children().slice(1)
+	for item: Control in items:
+		item.modulate.a = 0.0
 	if not is_new:
+		Feel.reveal(items, 0.06, start)
 		return
-	# The unlock deals in after the figures; its fanfare and glow wait until the
-	# run stinger has rung out (one stinger at a time).
-	var fanfare_at := maxf(Settings.time(unlock_at), Sfx.stinger_time_left())
+	# Real seconds, both: the figures' end (scaled by the animation speed) and the
+	# run stinger's end (audio time). The reveal, its fanfare and its glow all
+	# happen at the later one, together.
+	var figures_done := Settings.time(start + stagger * _stats.size() + Motion.seconds("run_count_up"))
+	var open_at := maxf(figures_done, Sfx.stinger_time_left())
 	create_tween().tween_callback(func() -> void:
+		_seal.open()
+		Feel.reveal(items, 0.06)
 		Sfx.play("unlock_fanfare", false)
-		Feel.glow(unlock_panel)).set_delay(fanfare_at)
+		Feel.glow(unlock_panel)
+		_music_back_after_stingers()).set_delay(open_at)
 
 
 ## The label's "%d" (or "%d / N") figure counts from 0 to `target`, then pops with a tick.
@@ -127,6 +149,9 @@ func _unlock_panel(unlock: Dictionary) -> PanelContainer:
 	panel.add_child(column)
 	var is_new: bool = unlock.get("is_new", false)
 	column.add_child(Ui.label("UNLOCKED FOR YOUR NEXT RUN" if is_new else "UNLOCK", "Eyebrow"))
+	if is_new:
+		_seal = Seal.new()
+		panel.add_child(_seal)
 	if is_new and unlock["kind"] == "piece_set":
 		var tokens := Ui.hbox(Metrics.XS)
 		for piece_type in ["pawn", "knight", "bishop", "rook", "queen"]:
@@ -222,7 +247,7 @@ func _stat(caption: String, format: String, target: int, hint: String = "") -> V
 	return column
 
 
-## The win's flourish: brass rays and a ring burst out from the title and fade.
+## The win's flourish: brass rays and a ring burst out from behind the title and fade.
 ## Draws only while it plays; nothing with reduced motion.
 class Flourish extends Control:
 	const RAYS := 18
@@ -242,7 +267,8 @@ class Flourish extends Control:
 		centre = at
 		progress = 0.0
 		create_tween().tween_property(self, "progress", 1.0, duration).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		FxBurst.spawn(self, FxBurst.Kind.SHARDS, at, Palette.BRASS, 220.0, duration)
+		# Rays and a ring only, drawn behind the page (this layer is the screen's
+		# first child): no shards or glow ever sit on the title, eyebrow or panels.
 
 	func _draw() -> void:
 		if progress >= 1.0:
@@ -254,3 +280,31 @@ class Flourish extends Control:
 			var inner := 70.0 + 160.0 * progress
 			draw_line(centre + direction * inner, centre + direction * reach, Color(Palette.BRASS, 0.35 * fade), 3.0 if i % 2 == 0 else 1.5, true)
 		draw_arc(centre, 60.0 + 360.0 * progress, 0, TAU, 64, Color(Palette.BRASS, 0.5 * fade), 2.0, true)
+
+
+## A new unlock's sealed emblem: a brass-rimmed disc with a "?" in the middle of
+## the unlock panel until the unlock opens; then it grows a little and fades.
+class Seal extends Control:
+	const RADIUS := 36.0
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	func open() -> void:
+		pivot_offset = size / 2.0
+		var tween := create_tween().set_parallel().set_ease(Tween.EASE_OUT)
+		tween.tween_property(self, "modulate:a", 0.0, Motion.time("reveal"))
+		if not Motion.reduced():
+			tween.tween_property(self, "scale", Vector2.ONE * 1.25, Motion.time("reveal"))
+		tween.chain().tween_callback(queue_free)
+
+	func _draw() -> void:
+		var centre := size / 2.0
+		draw_circle(centre, RADIUS, Palette.WALNUT_DEEP)
+		draw_arc(centre, RADIUS, 0, TAU, 48, Palette.BRASS, 2.0, true)
+		draw_arc(centre, RADIUS - 6.0, 0, TAU, 48, Color(Palette.BRASS, 0.35), 1.0, true)
+		var font := UiFonts.serif_bold()
+		var font_size := 34
+		var glyph_size := font.get_string_size("?", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+		draw_string(font, centre + Vector2(-glyph_size.x / 2.0, font.get_ascent(font_size) / 2.0 - 2.0), "?",
+			HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Palette.BRASS)
