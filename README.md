@@ -23,7 +23,7 @@ Game keys are **remappable** in Settings → Controls (click a key, press the ne
 | Roster | **Enter** on a benched piece (or the king) picks it up: **arrows** move the square cursor over your deploy squares, **Enter** places, **Esc** puts it back · **Enter** on a placed piece benches it |
 | Reward | **1–3** take a card · arrows + **Enter** on a card |
 | Shop · coaching | **1–9** jump to an offer's button, **Enter** buys / accepts |
-| Match | **1–5** select a card · **E / Space** end turn · **R** redraw · **Esc** / right-click cancel · **Y / Enter** escape check · **N** stay · hold **Shift** to hurry the opponent's turn |
+| Match | **1–5** select a card (a Scout plays at once) · **E / Space** end turn · **R** redraw · **Esc** / right-click cancel · **Y / Enter** escape check · **N** stay · hold **Shift** to hurry the opponent's turn |
 
 Settings (master / music / effects / interface volume, mute, animation speed Normal / Fast / Instant, reduced motion, screen shake, window / fullscreen, large text, key bindings) apply at once and are saved to `user://settings.json` (same folder as `meta.json`, below; slider moves are written once the slider rests, on release and when the panel closes). Delete it to restore the defaults from `config/ux.json`. During a run the settings panel also offers **Leave run…** (asks first): the run is dropped and the title opens; unlocks already earned stay.
 

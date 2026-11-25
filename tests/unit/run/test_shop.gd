@@ -149,3 +149,23 @@ func test_a_spare_move_card_can_be_removed() -> void:
 	session.deck.append(spare)
 	assert_true(session.remove_card(spare.uid)["ok"])
 	assert_eq(session.deck.filter(func(c: CardData) -> bool: return c.type == "move").size(), 1)
+
+
+func test_scout_is_sold_in_the_shop_only() -> void:
+	var economy: Dictionary = GameConfig.data("economy")
+	assert_true((economy["shop"]["card_pool"] as Array).has("scout"))
+	assert_false((economy["reward_card_pool"] as Array).has("scout"), "never a reward")
+	for opponent: Dictionary in GameConfig.data("opponents").values():
+		assert_false((opponent["deck"] as Array).has("scout"), "never in an opponent deck")
+	var scout_offer := {}
+	for seed_value in range(1, 30):
+		var shop_session := Helper.started_session(dir, seed_value)
+		Helper.win_and_skip(shop_session, "L1")
+		shop_session.choose_node("L2")
+		for offer: Dictionary in shop_session.shop_offers()["cards"]:
+			if offer["card"].type == "scout":
+				scout_offer = offer
+		if not scout_offer.is_empty():
+			break
+	assert_false(scout_offer.is_empty(), "some shop offers a Scout")
+	assert_eq(scout_offer.get("price"), int(economy["shop"]["card_prices"]["normal"]))

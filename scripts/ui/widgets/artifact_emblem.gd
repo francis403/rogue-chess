@@ -2,7 +2,8 @@ class_name ArtifactEmblem
 extends Control
 ## An artifact's medallion, drawn in code like the piece tokens: a brass coin with
 ## a dark rim and a simple ink drawing (Espresso a cup, Trophy Case a trophy,
-## Sinkholes a board with holes, Powder Keg a bomb). Unknown ids get a "?".
+## Sinkholes a board with holes, Powder Keg a bomb, foresight a glass ball on
+## its stand). Unknown ids get a "?".
 ## `is_dim` draws it unlit (not chosen): a dark coin with brass ink.
 
 var artifact_id: String = ""
@@ -42,6 +43,8 @@ func _draw() -> void:
 			_holes(centre, unit, ink, face)
 		"exploding":
 			_bomb(centre, unit, ink)
+		"foresight":
+			_foresight(centre, unit, ink, face)
 		_:
 			var font := UiFonts.serif_bold()
 			var font_size := int(radius)
@@ -100,6 +103,24 @@ func _bomb(c: Vector2, u: float, ink: Color) -> void:
 	for i in 4:
 		var angle := TAU * i / 8.0
 		var reach := Vector2.from_angle(angle) * u * 0.32
+		draw_line(spark - reach, spark + reach, ink, maxf(u * 0.09, 1.2), true)
+
+
+## A glass ball on a low stand, a shine on the glass and a sparkle beside it.
+func _foresight(c: Vector2, u: float, ink: Color, face: Color) -> void:
+	var ball := c + Vector2(-u * 0.05, -u * 0.22)
+	var ball_radius := u * 0.78
+	_quad(Vector2(c.x - u * 0.45, c.y + u * 0.5), Vector2(c.x + u * 0.35, c.y + u * 0.5),
+		Vector2(c.x + u * 0.7, c.y + u * 0.95), Vector2(c.x - u * 0.8, c.y + u * 0.95), ink)
+	draw_line(Vector2(c.x - u * 1.0, c.y + u * 1.05), Vector2(c.x + u * 0.9, c.y + u * 1.05), ink, maxf(u * 0.14, 1.5), true)
+	draw_circle(ball, ball_radius, ink)
+	# A thin gap where the ball rests in the stand, so it doesn't read as a pawn.
+	draw_line(Vector2(c.x - u * 0.62, c.y + u * 0.44), Vector2(c.x + u * 0.52, c.y + u * 0.44), face, maxf(u * 0.1, 1.2), true)
+	draw_arc(ball, ball_radius * 0.66, PI * 1.08, PI * 1.42, 10, face, maxf(u * 0.13, 1.5), true)
+	draw_circle(ball + Vector2.from_angle(PI * 1.25) * ball_radius * 0.3, u * 0.07, face)
+	var spark := c + Vector2(u * 0.95, -u * 0.95)
+	for i in 4:
+		var reach := Vector2.from_angle(TAU * i / 8.0) * u * (0.28 if i % 2 == 0 else 0.16)
 		draw_line(spark - reach, spark + reach, ink, maxf(u * 0.09, 1.2), true)
 
 

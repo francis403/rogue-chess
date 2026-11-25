@@ -246,6 +246,36 @@ func test_reply_loss_counts_a_promoting_capture() -> void:
 	assert_almost_eq(promoting - plain, queen_gain, 0.001)
 
 
+## foresight (D68): a player pawn is worth 1 + penalty to the opponent. At
+## target - 2 that capture wins, so both shortcut scorers must count the penalty.
+func test_foresight_penalty_counts_in_shortcut_scoring() -> void:
+	var win_score := float(GameConfig.value("ai", "win_score"))
+	var take_pawn := [Vector2i(0, 2), Vector2i(0, 1)]
+	for has_ball in [false, true]:
+		var game := H.make([H.piece("king", Vector2i(5, 0)), H.piece("rook", Vector2i(0, 2)), H.piece("pawn", Vector2i(0, 1)),
+			H.piece("pawn", Vector2i(1, 2)), H.piece("bishop", Vector2i(3, 2))],
+			[H.piece("king", Vector2i(5, 5)), H.piece("rook", Vector2i(0, 5)), H.piece("knight", Vector2i(2, 4))],
+			H.FIVE_MOVES, H.FIVE_MOVES, {"player_artifacts": ["foresight"] if has_ball else []})
+		game.end_turn()
+		game.play(0, Vector2i(0, 5), Vector2i(0, 2))
+		game.play(0, Vector2i(2, 4), Vector2i(1, 2) if has_ball else Vector2i(3, 2))
+		game.end_turn()
+		game.end_turn()
+		assert_eq(game.score(O), game.target_score() - 2, "rook + pawn with penalties, or rook + bishop")
+		var opponent_ai := MatchAI.new(O, 2, 0.0, _rng(1))
+		assert_eq(opponent_ai._has_winning_follow_up(game, opponent_ai._board_copy(game)), has_ball, "ball %s" % has_ball)
+		var player_ai := MatchAI.new(P, 2, 0.0, _rng(1))
+		var loss: float = player_ai._reply_loss(game, game.piece_at(take_pawn[0]), game.piece_at(take_pawn[1]))
+		if has_ball:
+			assert_eq(loss, win_score, "the reply loses the match")
+			var action := opponent_ai.choose_action(game)
+			assert_eq([action["from"], action["to"]], take_pawn)
+			MatchAI.apply_action(game, action)
+			assert_eq(game.result()["reason"], "score")
+		else:
+			assert_lt(loss, win_score)
+
+
 ## Knight takes the rook on (3, 4) and the pawn recaptures: a good trade, unless
 ## the enemy's Powder Keg recapture also blows up the king next to (3, 4).
 func test_depth_two_sees_an_enemy_explosion() -> void:

@@ -159,7 +159,9 @@ func _pick_piece_set(session: RunSession) -> String:
 
 
 func _pick_artifacts(session: RunSession) -> Array:
+	# The bot can't use hidden-card info, any artifact like that would be pure downside (D30).
 	var ids: Array = session.available_artifacts().map(func(entry: Dictionary) -> String: return entry["id"])
+	ids.erase("foresight")
 	if _rng.randf() >= ARTIFACT_CHANCE:
 		return []
 	_shuffle(ids)
@@ -306,6 +308,9 @@ func _shop(session: RunSession) -> bool:
 		for index in offers[kind].size():
 			var offer: Dictionary = offers[kind][index]
 			if offer["sold"] or offer["price"] > session.points or _rng.randf() >= SHOP_BUY_CHANCE:
+				continue
+			# Nor does it play Scouts (D30).
+			if kind == "cards" and (offer["card"] as CardData).is_reveal():
 				continue
 			var result := session.buy_card(index) if kind == "cards" else session.buy_piece(index)
 			if not _ok(result, "buy %s" % kind):

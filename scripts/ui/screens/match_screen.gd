@@ -4,6 +4,7 @@ extends Control
 ## MatchView builds the widgets and refreshes them from the game; MatchFx animates
 ## the events; MatchOverPanel is the result modal.
 ## Card-first: card -> piece -> target. Piece-first: piece -> target (cheapest card is used).
+## A Scout moves no piece: picking it plays it at once.
 
 const PLAYER := ChessMatch.PLAYER
 const OPPONENT := ChessMatch.OPPONENT
@@ -177,6 +178,9 @@ func press_card(card_index: int) -> void:
 		Feel.shake(_card_views[card_index])
 		_view.set_hint(reason, Palette.OXBLOOD_INK, "Not playable")
 		return
+	if game.hand(PLAYER)[card_index].is_reveal():
+		_play_reveal(card_index)
+		return
 	Sfx.play("card_select")
 	_selected_card = card_index
 	var pieces := game.pieces_for_card(card_index)
@@ -246,7 +250,8 @@ func _sync_hand() -> void:
 		var view := CardView.create(hand[card_index])
 		view.is_playable = is_my_turn and game.is_card_playable(card_index)
 		view.key_hint = _card_key(card_index)
-		view.drag_payload = {"card_index": card_index}
+		# A Scout plays on the press itself: there is nothing to drop it on.
+		view.drag_payload = null if hand[card_index].is_reveal() else {"card_index": card_index}
 		view.pressed.connect(press_card.bind(card_index))
 		view.drag_started.connect(_on_card_drag_started.bind(card_index))
 		if not shown_uids.has(hand[card_index].uid):
@@ -324,10 +329,12 @@ func _show_marks() -> void:
 		_view.set_hint("Click a target. The cheapest card that allows the move is played." + _ignite_warning(), Palette.BRASS, "Choose a target")
 		return
 	_view.board.set_highlights(MatchUiLogic.movable_pieces(game), [], [])
-	if game.legal_plays(PLAYER).is_empty():
-		_view.set_hint(_stuck_hint(), Palette.IVORY_SOFT, "Nothing to play")
-	else:
+	if not game.legal_plays(PLAYER).is_empty():
 		_view.set_hint("Pick a card, or click one of your highlighted pieces.", Palette.IVORY_SOFT, "Your turn")
+	elif MatchUiLogic.playable_reveal(game) != -1:
+		_view.set_hint(_scout_only_hint(), Palette.IVORY_SOFT, "Nothing to move")
+	else:
+		_view.set_hint(_stuck_hint(), Palette.IVORY_SOFT, "Nothing to play")
 
 
 func _show_escape_prompt() -> void:
@@ -356,6 +363,12 @@ func _stuck_hint() -> String:
 	if not _view.redraw_helps():
 		return "Nothing in your hand can move, and a redraw wouldn't leave enough energy to play any card in your deck. End your turn."
 	return "Nothing in your hand can move. Redraw for a new hand, or end your turn."
+
+
+## No card in hand moves a piece, but a Scout can still be played.
+func _scout_only_hint() -> String:
+	var redraw := "redraw for a new hand, " if game.can_redraw() and _view.redraw_helps() else ""
+	return "No card in your hand can move a piece. Play Scout to reveal hidden cards, %sor end your turn." % redraw
 
 
 ## Fire pieces ignite on their first move (D24): say so before it happens.
@@ -434,13 +447,24 @@ func _play_selected(to: Vector2i) -> void:
 	if play.is_empty():
 		return
 	var view := _card_views[play["card_index"]]
-	_fx.fly_card(view, _view.board.square_centre(play["from"]))
+	_fx.fly_card(view, _view.board.get_global_transform() * _view.board.square_centre(play["from"]))
 	_take_from_hand(view)
 	_selected_card = -1
 	_selected_from = NO_SQUARE
 	_lifted = null  # the move animation takes this piece's lift over
 	_show_busy("Playing", "Playing %s…" % view.card.display_name())
 	await _run(game.play(play["card_index"], play["from"], play["to"]))
+
+
+## A Scout flies off toward the opponent's hand, and its reveal plays out there.
+func _play_reveal(card_index: int) -> void:
+	var view := _card_views[card_index]
+	_fx.fly_card(view, _view.opponent_hand.get_global_rect().get_center())
+	_take_from_hand(view)
+	_selected_card = -1
+	_selected_from = NO_SQUARE
+	_show_busy("Scouting", "Revealing %s's hidden cards…" % _names[OPPONENT])
+	await _run(game.reveal(card_index))
 
 
 ## The played card leaves the hand at once (its ghost flies to the piece) and the

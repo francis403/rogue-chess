@@ -75,9 +75,13 @@ func apply(events: Array[Dictionary]) -> void:
 		var event := events[index]
 		if _is_blast_open and not _is_blast_part(event):
 			await _close_blast()
+		if event["type"] == "turn_start":
+			_log_draws(draws)  # draws so far belong to the turn that is ending
 		view.log_line(EventText.describe(event, names), event["type"])
 		match event["type"]:
 			"draw":
+				if event["side"] == OPPONENT and draws[OPPONENT] == 0:
+					_deal_opponent_hand()  # on its first draw: the row shows the whole new hand
 				draws[event["side"]] += 1
 			"turn_start":
 				_on_turn_start(event)
@@ -87,6 +91,8 @@ func apply(events: Array[Dictionary]) -> void:
 				_on_redraw_event(event)
 			"card_played":
 				await _on_card_played(event, events, index)
+			"reveal":
+				await _animate_reveal()
 			"discard":
 				await _animate_discard(event)
 			"check":
@@ -122,11 +128,17 @@ func apply(events: Array[Dictionary]) -> void:
 				Feel.pop(view.piles_label if event["side"] == PLAYER else view.opponent_piles, 1.15, "pop")
 	if _is_blast_open:
 		await _close_blast()
+	_log_draws(draws)
+	if not events.is_empty():
+		view.sync_tokens()
+
+
+## "<side> drew N cards" for the draws counted so far, which then reset.
+func _log_draws(draws: Array) -> void:
 	for side in [PLAYER, OPPONENT]:
 		if draws[side] > 0:
 			view.log_line("%s drew %d card%s" % [names[side], draws[side], "" if draws[side] == 1 else "s"], "draw")
-	if not events.is_empty():
-		view.sync_tokens()
+		draws[side] = 0
 
 
 ## Every hand card looks playable only if it is right now (called as each event
@@ -307,11 +319,40 @@ func _on_card_played(event: Dictionary, events: Array[Dictionary], index: int) -
 		return
 	view.turn_caption.text = "%s plays %s" % [names[OPPONENT], Ui.piece_name(event["card_type"])]
 	view.set_hint("%s plays %s." % [names[OPPONENT], Ui.piece_name(event["card_type"])], Palette.IVORY_FAINT, "Opponent's turn")
-	if view.opponent_hand.get_child_count() > 0:
-		view.opponent_hand.get_child(0).queue_free()
-	view.opponent_hand_count.text = "%d hidden" % game.hand(OPPONENT).size()
+	view.opponent_hand.remove_card(event["card_uid"])
 	view.opponent_energy.animate_to(event["energy"], Motion.time("pip"))
 	await _reveal_opponent_card(event, events, index)
+
+
+## The opponent's new hand (its draw comes at the end of its turn, and at the
+## start of the match) deals into its row.
+func _deal_opponent_hand() -> void:
+	view.sync_opponent_hand()
+	Feel.reveal(view.opponent_hand.get_children(), Motion.seconds("deal_stagger"))
+
+
+## A Scout turns the next hidden cards face up: one after another, each opens
+## from edge-on and glows brass (with reduced motion they only fade in).
+func _animate_reveal() -> void:
+	var faces := view.sync_opponent_hand()
+	Sfx.play("reward_reveal")
+	Feel.pop(view.opponent_hand.caption, 1.15, "pop")
+	var stagger := Motion.time("deal_stagger") * 2.0
+	for i in faces.size():
+		_flip_up(faces[i], stagger * i)
+	await wait(Motion.time("reveal") + stagger * faces.size())
+
+
+func _flip_up(face: CardView, delay: float) -> void:
+	if Motion.reduced():
+		face.modulate.a = 0.0
+		Motion.tween(face).tween_property(face, "modulate:a", 1.0, Motion.time("reveal")).set_delay(delay)
+		return
+	face.pivot_offset = CardView.MINI / 2.0
+	face.scale = Vector2(0.0, 1.0)
+	var tween := Motion.tween(face, "settle")
+	tween.tween_property(face, "scale:x", 1.0, Motion.time("reveal")).set_delay(delay)
+	tween.tween_callback(Feel.glow.bind(face))
 
 
 ## The opponent's card, face up beside the board, with its piece and target marked
@@ -351,9 +392,14 @@ func _mark_opponent_play(events: Array[Dictionary], index: int) -> void:
 			return
 
 
-## Discarded hand cards drop away (end of turn, redraw).
+## Discarded hand cards drop away (end of turn, redraw); the opponent's row
+## fades out in a short beat before its new hand deals in.
 func _animate_discard(event: Dictionary) -> void:
-	if event["side"] != PLAYER or event["card_uids"].is_empty():
+	if event["card_uids"].is_empty():
+		return
+	if event["side"] == OPPONENT:
+		view.opponent_hand.sweep_out(Motion.time("sweep"))
+		await wait(Motion.time("sweep"))
 		return
 	Sfx.play("card_discard")
 	for card in card_views:
@@ -753,9 +799,10 @@ func _swap_to_promoted(token: PieceToken, piece_type: String) -> void:
 	token.queue_redraw()
 
 
-## The played card leaves the hand toward the piece it moves, shrinking and fading;
-## it fades in place with reduced motion.
-func fly_card(card: CardView, board_point: Vector2) -> void:
+## The played card leaves the hand toward `target` (a global point: the piece it
+## moves, or the opponent's hand for a Scout), shrinking and fading; it fades in
+## place with reduced motion.
+func fly_card(card: CardView, target_point: Vector2) -> void:
 	var ghost := CardView.create(card.card, card.size)
 	ghost.is_interactive = false
 	ghost.is_selected = card.is_selected
@@ -768,7 +815,7 @@ func fly_card(card: CardView, board_point: Vector2) -> void:
 	var duration := Motion.time("card_fly")
 	var tween := Motion.tween(ghost).set_parallel()
 	if not Motion.reduced():
-		var target := to_layer * (view.board.get_global_transform() * board_point) - card.size / 2.0
+		var target := to_layer * target_point - card.size / 2.0
 		# It rises out of the hand first, then glides across; it shrinks early and
 		# arrives before it has faded, so it settles on the piece, inside its square.
 		tween.tween_property(ghost, "position:y", target.y, duration * 0.7).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)

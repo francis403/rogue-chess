@@ -248,7 +248,7 @@ func _extras_run() -> void:
 ## Hovers the player's hand card `index` (the card lifts and its tooltip text shows).
 func _hover_card(index: int) -> void:
 	var views := _screen().find_children("*", "CardView", true, false).filter(
-		func(view: CardView) -> bool: return not view.is_back and view.is_visible_in_tree())
+		func(view: CardView) -> bool: return view.is_interactive and view.is_visible_in_tree())
 	if index < views.size():
 		(views[index] as CardView).mouse_entered.emit()
 	await get_tree().process_frame

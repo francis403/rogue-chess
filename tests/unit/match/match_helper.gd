@@ -53,6 +53,11 @@ static func events_of(events: Array[Dictionary], type: String) -> Array[Dictiona
 	return events.filter(func(event: Dictionary) -> bool: return event["type"] == type)
 
 
+## Events of `type` that concern `side`.
+static func side_events(events: Array[Dictionary], type: String, side: int) -> Array[Dictionary]:
+	return events_of(events, type).filter(func(event: Dictionary) -> bool: return event["side"] == side)
+
+
 static func sorted(squares: Array) -> Array:
 	var copy := squares.duplicate()
 	copy.sort()

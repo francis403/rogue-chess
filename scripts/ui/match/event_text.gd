@@ -47,6 +47,10 @@ static func describe(event: Dictionary, names: Array) -> String:
 			return "Pawn promoted to Queen on %s" % square_name(event["square"])
 		"redraw":
 			return "%s redrew the hand" % who
+		"reveal":
+			var count: int = event["count"]
+			var left := "none hidden now" if int(event["hidden"]) == 0 else "%d still hidden" % event["hidden"]
+			return "%s scouted %d card%s · %s" % [who, count, "" if count == 1 else "s", left]
 		"shuffle":
 			return "%s shuffled %d cards into the draw pile" % [who, event["count"]]
 		"check":

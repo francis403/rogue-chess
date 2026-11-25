@@ -290,9 +290,9 @@ func board() -> BoardView:
 	return boards[0] if not boards.is_empty() else null
 
 
-## The player's hand views in hand order (opponent card backs excluded).
+## The player's hand views in hand order (the opponent's hand row excluded).
 func hand_views() -> Array:
-	return find_all(screen(), CardView).filter(func(view: CardView) -> bool: return not view.is_back)
+	return find_all(screen(), CardView).filter(func(view: CardView) -> bool: return view.is_interactive)
 
 
 func click_square(square: Vector2i) -> void:
@@ -449,8 +449,9 @@ func player_brain(depth: int = 2) -> MatchAI:
 
 ## Shows the real match screen with a hand-made ChessMatch setup (needs a run for the HUD).
 ## Pieces: [type, x, y, upgrade?]; cards: "type" or "type:upgrade". A deck of exactly
-## 5 cards is the whole opening hand.
-func show_crafted_match(player: Array, opponent: Array, player_deck: Array, opponent_deck: Array) -> bool:
+## 5 cards is the whole opening hand. `hidden_cards` sets how many opponent cards
+## are hidden (-1: the default, config/match.json).
+func show_crafted_match(player: Array, opponent: Array, player_deck: Array, opponent_deck: Array, hidden_cards: int = -1) -> bool:
 	Game.match_setup = {
 		"seed": 5,
 		"holes": [] as Array[Vector2i],
@@ -458,6 +459,8 @@ func show_crafted_match(player: Array, opponent: Array, player_deck: Array, oppo
 		"opponent": {"id": "easy", "name": "Rookie Rex", "difficulty": "Easy", "search_depth": 1, "random_chance": 0.0,
 			"roster": _roster(opponent), "deck": _cards(opponent_deck), "artifacts": [] as Array[String]},
 	}
+	if hidden_cards >= 0:
+		Game.match_setup["opponent"]["hidden_cards"] = hidden_cards
 	main.show_screen("MATCH")
 	return await wait_match_idle()
 

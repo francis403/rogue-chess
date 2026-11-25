@@ -4,14 +4,18 @@ extends Control
 ## Lifts and grows slightly on hover; sinks (hollow cost coin, dim glyph) when
 ## unplayable; lifts further with a brass edge and glow when selected.
 ## Match extras: a key cap ("1".."5"), a deal-in from the deck side, a discard
-## sweep, and drag-to-play (set drag_payload).
+## sweep, and drag-to-play (set drag_payload). Minis (create_mini) are the
+## opponent's shown cards: glyph and cost only, the name is in the tooltip.
 
 signal pressed
 signal hovered(is_over: bool)
 signal drag_started
 
 const SIZE := Vector2(104, 146)
-const SMALL_BACK := Vector2(24, 34)
+## The opponent's hand: shown cards (minis) and hidden ones (backs) share this size.
+const MINI := Vector2(40, 56)
+## A mini's cost coin, as a share of the full card's (big enough for a MIN_FONT figure).
+const MINI_COIN := 0.62
 ## Smallest text on a card (px at 1280x720).
 const MIN_FONT := 12
 ## Cost coin, laid out for SIZE (scaled with the card): centre and outer radius.
@@ -23,6 +27,7 @@ const RIBBON_EDGE := 4.0
 
 var card: CardData
 var is_back: bool = false
+var is_mini: bool = false
 var is_playable: bool = true:
 	set(value):
 		is_playable = value
@@ -54,9 +59,10 @@ var drag_payload: Variant = null
 var _is_hovered: bool = false
 ## Reused by every redraw (the lift tweens redraw each frame): no allocation per frame.
 var _face: StyleBoxFlat = UiTheme.box(Palette.WALNUT_HIGH, Palette.RULE_STRONG, UiTheme.RADIUS, 0)
-## Polygon points reused by every redraw (arrow heads, the Cheaper arrow, the rare lozenge).
+## Polygon points reused by every redraw (arrow heads, the Cheaper arrow, the rare lozenge, the Scout's eye).
 var _triangle: PackedVector2Array = PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
 var _lozenge: PackedVector2Array = PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
+var _eye: PackedVector2Array = PackedVector2Array()
 var _lift: float = 0.0:
 	set(value):
 		_lift = value
@@ -78,7 +84,16 @@ static func create(card_data: CardData, card_size: Vector2 = SIZE) -> CardView:
 	return view
 
 
-static func create_back(card_size: Vector2 = SMALL_BACK) -> CardView:
+## A read-only mini face (MINI): its name, cost and rules show in the tooltip.
+static func create_mini(card_data: CardData) -> CardView:
+	var view := create(card_data, MINI)
+	view.is_mini = true
+	view.is_interactive = false
+	view.is_inspectable = true
+	return view
+
+
+static func create_back(card_size: Vector2 = MINI) -> CardView:
 	var view := CardView.new()
 	view.is_back = true
 	view.is_interactive = false
@@ -172,10 +187,16 @@ func _draw() -> void:
 	draw_set_transform(_slide + size * (1.0 - grow) / 2.0, 0.0, Vector2.ONE * grow)
 	draw_style_box(_face_style(), rect)
 	draw_rect(rect.grow(-5 * _scale()), Palette.RULE_SOFT, false, 1.0)
-	_draw_glyph(rect)
+	if is_mini:
+		# The glyph sits lower and larger: no name below it, the coin above it.
+		_draw_glyph(rect.position + Vector2(rect.size.x / 2.0, rect.size.y * 0.6), rect.size.x * 0.4)
+		_draw_cost(rect.position + Vector2.ONE * COIN_CENTRE * MINI_COIN, MINI_COIN)
+		return
+	# Same size and place on every card, ribbon or not (the ribbon may overlap its rim).
+	_draw_glyph(rect.position + Vector2(rect.size.x / 2.0, rect.size.y * 0.46), rect.size.x * 0.3)
 	_draw_name(rect)
 	if show_cost:
-		_draw_cost(rect)
+		_draw_cost(rect.position + Vector2.ONE * COIN_CENTRE * _scale(), _scale())
 	_draw_ribbon(rect)
 	if card.is_rare():
 		_draw_rare_mark(rect.position + Vector2(rect.size.x / 2.0, rect.size.y - 7 * _scale()))
@@ -218,15 +239,16 @@ func _scale() -> float:
 	return size.x / SIZE.x
 
 
-func _draw_glyph(rect: Rect2) -> void:
-	var centre := rect.position + Vector2(rect.size.x / 2.0, rect.size.y * 0.46)
-	# Same size and place on every card, ribbon or not (the ribbon may overlap its rim).
-	var radius := rect.size.x * 0.3
+## The piece glyph on its inset disc; Move and Scout are drawn, not set in type.
+func _draw_glyph(centre: Vector2, radius: float) -> void:
 	var ink := Palette.IVORY_SOFT if is_playable else Palette.IVORY_MUTED
 	draw_circle(centre, radius, Palette.WALNUT_INSET)
 	draw_arc(centre, radius, 0, TAU, 40, Palette.RULE if is_playable else Palette.RULE_SOFT, 1.0, true)
 	if card.type == "move":
 		_draw_move_arrows(centre, radius * 0.17 / 0.3, ink)
+		return
+	if card.is_reveal():
+		_draw_eye(centre, radius, ink)
 		return
 	var font := UiFonts.symbols()
 	var font_size := int(radius * 1.4)
@@ -246,6 +268,30 @@ func _draw_move_arrows(centre: Vector2, reach: float, color: Color) -> void:
 	draw_circle(centre, 3.5, color)
 
 
+## The Scout's eye: an almond outline, the iris with its pupil and a glint, and
+## three lashes rising off the upper lid ("look").
+func _draw_eye(centre: Vector2, radius: float, color: Color) -> void:
+	var half_width := radius * 0.66
+	var lid := radius * 0.4
+	var steps := 12
+	_eye.resize(steps * 2 + 1)
+	for i in steps + 1:
+		var t := -1.0 + 2.0 * i / steps
+		var bulge := lid * (1.0 - t * t)
+		_eye[i] = centre + Vector2(t * half_width, -bulge)
+		if i < steps:
+			_eye[steps * 2 - i] = centre + Vector2(t * half_width, bulge)
+	_eye[steps * 2] = _eye[0]
+	var line := maxf(radius * 0.08, 1.5)
+	draw_polyline(_eye, color, line, true)
+	draw_circle(centre, lid * 0.78, color)
+	draw_circle(centre, lid * 0.34, Palette.WALNUT_INSET)
+	draw_circle(centre + Vector2(lid * 0.3, -lid * 0.3), lid * 0.14, color)
+	for t: float in [-0.55, 0.0, 0.55]:
+		var root := centre + Vector2(t * half_width, -lid * (1.0 - t * t) - line)
+		draw_line(root, root + Vector2.from_angle(-PI / 2.0 + t * 0.9) * radius * 0.24, color, line, true)
+
+
 func _draw_name(rect: Rect2) -> void:
 	var font := UiFonts.serif_bold()
 	var font_size := maxi(int(15 * _scale()), MIN_FONT)
@@ -255,10 +301,9 @@ func _draw_name(rect: Rect2) -> void:
 		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Palette.IVORY if is_playable else Palette.IVORY_FAINT)
 
 
-## A brass coin when affordable and playable; a hollow coin when not.
-func _draw_cost(rect: Rect2) -> void:
-	var scale_factor := _scale()
-	var at := rect.position + Vector2.ONE * COIN_CENTRE * scale_factor
+## A brass coin centred on `at` (laid out for SIZE, scaled by `scale_factor`) when
+## affordable and playable; a hollow coin when not.
+func _draw_cost(at: Vector2, scale_factor: float) -> void:
 	var coin := Palette.FELT if card.upgrade == "cheaper" else Palette.BRASS
 	var ink := Palette.BRASS_INK
 	draw_circle(at, COIN_RADIUS * scale_factor, Palette.WALNUT_DEEP)
