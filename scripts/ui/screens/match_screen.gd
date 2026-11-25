@@ -1,13 +1,20 @@
 extends Control
 ## The match: board, hand, score race, both sides' panels and the event log.
-## Every legality question goes to ChessMatch; this script only selects, plays and animates.
+## Every legality question goes to ChessMatch; this script only selects and plays.
+## MatchView builds the widgets and refreshes them from the game; MatchFx animates
+## the events; MatchOverPanel is the result modal.
 ## Card-first: card -> piece -> target. Piece-first: piece -> target (cheapest card is used).
 
 const PLAYER := ChessMatch.PLAYER
 const OPPONENT := ChessMatch.OPPONENT
 const NO_SQUARE := BoardView.NO_SQUARE
 const MAX_OPPONENT_ACTIONS := 60
-const MAX_LOG_LINES := 200
+## Pixels a selected piece floats above its shadow.
+const PICKUP_LIFT := 7.0
+## The hand's shortcut actions, card 1 first (registered by the Settings autoload).
+const CARD_ACTIONS: Array[StringName] = [&"rc_card_1", &"rc_card_2", &"rc_card_3", &"rc_card_4", &"rc_card_5"]
+## Seconds between checks while a modal holds the opponent's turn.
+const MODAL_POLL := 0.1
 
 var game: ChessMatch
 
@@ -20,33 +27,17 @@ var _selected_card: int = -1
 var _selected_from: Vector2i = NO_SQUARE
 var _targets: Array[Vector2i] = []
 var _card_views: Array[CardView] = []
-
-var _board: BoardView
-var _hand_row: HBoxContainer
-var _score: ScoreRace
-var _turn_label: Label
-var _turn_caption: Label
-var _hint: Label
-var _energy: PipMeter
-var _energy_label: Label
-var _piles_label: Label
-var _redraw_button: Button
-var _end_turn_button: Button
-var _opponent_energy: PipMeter
-var _opponent_hand: HBoxContainer
-var _opponent_hand_count: Label
-var _opponent_piles: Label
-var _log: VBoxContainer
-var _log_scroll: ScrollContainer
+var _view: MatchView
+var _fx: MatchFx
+var _lifted: PieceToken
 var _over_status: Label
-var _escape_box: PanelContainer
-var _escape_cost_label: Label
-var _stay_button: Button
-var _penalty_tag: Label
-var _opponent_penalty_tag: Label
-var _toast: PanelContainer
-var _last_checkers: Array[Vector2i] = []
 var _is_finishing: bool = false
+## True while the opponent's actions are playing (clicks and rc_hurry hurry them).
+var _is_opponent_acting: bool = false
+## Read by tests (tests/integration/test_ui_check_escape.gd).
+var _opponent_penalty_tag: Label:
+	get:
+		return _view.opponent_penalty_tag
 
 
 func _ready() -> void:
@@ -56,16 +47,117 @@ func _ready() -> void:
 	game = ChessMatch.new(setup)
 	_move_delay = float(GameConfig.value("ai", "move_delay_seconds"))
 	_ai = _make_ai(setup)
-	_build_layout()
+	_view = MatchView.new(game, setup, _names)
+	_view.build(self)
+	_connect_view()
+	_fx = MatchFx.new(_view, _card_views)
+	add_child(_fx)
+	Settings.bindings_changed.connect(_on_bindings_changed)
 	_sync()
 	_start.call_deferred()
 
 
-func _unhandled_input(event: InputEvent) -> void:
-	var is_right_click: bool = event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT
-	if event.is_action_pressed("ui_cancel") or is_right_click:
-		get_viewport().set_input_as_handled()
+func _exit_tree() -> void:
+	Motion.hurry = false  # left mid-turn (Leave run): never carry the hurry over
+
+
+func _connect_view() -> void:
+	_view.board.square_clicked.connect(press_square)
+	_view.board.square_hovered.connect(_on_square_hovered)
+	_view.board.cancel_requested.connect(_cancel)
+	_view.board.card_dropped.connect(press_square)
+	_view.redraw_button.pressed.connect(_on_redraw)
+	_view.end_turn_button.pressed.connect(_on_end_turn)
+	_view.stay_button.pressed.connect(_on_stay)
+
+
+## Cancel is read here, before the GUI: Godot's viewport spends an Esc on hiding
+## a visible tooltip (and marks it handled), so with the mouse resting on a card
+## the first Esc never reached _unhandled_input. The event is left unhandled, so
+## the tooltip still closes too. The hurry key is read here as well, so a focused
+## control never eats it.
+func _input(event: InputEvent) -> void:
+	if A11y.is_modal_open(self):
+		return
+	if A11y.is_action(event, &"rc_cancel"):
 		_cancel()
+	elif A11y.is_action(event, &"rc_hurry") and _is_opponent_acting:
+		_hurry()
+
+
+## The match's shortcuts are InputMap actions (remappable, bound by physical key
+## position, so they sit in the same place on any layout).
+func _unhandled_input(event: InputEvent) -> void:
+	if A11y.is_modal_open(self):
+		return
+	var is_right_click: bool = event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT
+	# Esc stays the match's own (never the settings) even when cancel is rebound.
+	if A11y.is_action(event, &"rc_cancel") or event.is_action_pressed("ui_cancel") or is_right_click:
+		get_viewport().set_input_as_handled()
+		if is_right_click:
+			_cancel()
+		return
+	var key := event as InputEventKey
+	if key == null or not key.pressed or key.echo or key.ctrl_pressed or key.meta_pressed or key.alt_pressed:
+		return
+	for card_index in CARD_ACTIONS.size():
+		if A11y.is_action(event, CARD_ACTIONS[card_index]):
+			if card_index < _card_views.size():
+				press_card(card_index)
+				get_viewport().set_input_as_handled()
+			return
+	if _press_shortcut(event):
+		get_viewport().set_input_as_handled()
+
+
+## rc_end_turn ends the turn, rc_redraw redraws, rc_escape_yes escapes (when there
+## is exactly one escape square), rc_escape_no stays in check (the card actions are
+## read in _unhandled_input). True if the event was used.
+func _press_shortcut(event: InputEvent) -> bool:
+	if A11y.is_action(event, &"rc_end_turn"):
+		return _press_button(_view.end_turn_button)
+	if A11y.is_action(event, &"rc_redraw"):
+		return _press_button(_view.redraw_button)
+	if A11y.is_action(event, &"rc_escape_no"):
+		return _press_button(_view.stay_button)
+	if A11y.is_action(event, &"rc_escape_yes"):
+		return _escape_by_key()
+	return false
+
+
+## A rebind in the settings overlay: key caps and key lines follow at once.
+func _on_bindings_changed() -> void:
+	_view.refresh_keys()
+	for i in _card_views.size():
+		_card_views[i].key_hint = _card_key(i)
+		_card_views[i].queue_redraw()
+	if not _is_busy:
+		_show_selection()
+
+
+## The key cap of the card at `card_index` ("" past the fifth).
+static func _card_key(card_index: int) -> String:
+	return A11y.key_label(CARD_ACTIONS[card_index]) if card_index < CARD_ACTIONS.size() else ""
+
+
+## Presses a button as a click would (its sound and handler), if it can be pressed.
+func _press_button(button: Button) -> bool:
+	if button.disabled or not button.is_visible_in_tree():
+		return false
+	button.pressed.emit()
+	return true
+
+
+func _escape_by_key() -> bool:
+	if not _can_answer_escape():
+		return false
+	var squares := game.escape_squares()
+	if squares.size() == 1:
+		_escape(squares[0])
+		return true
+	Sfx.play("ui_error")
+	_view.set_hint("Several escape squares: click one, or press %s to stay." % A11y.key_label(&"rc_escape_no"), Palette.OXBLOOD_INK, "Check")
+	return true
 
 
 func is_busy() -> bool:
@@ -81,9 +173,11 @@ func press_card(card_index: int) -> void:
 		return
 	var reason := MatchUiLogic.unplayable_reason(game, card_index)
 	if reason != "":
-		Ui.shake(_card_views[card_index])
-		_set_hint(reason, Palette.OXBLOOD)
+		Sfx.play("ui_error")
+		Feel.shake(_card_views[card_index])
+		_view.set_hint(reason, Palette.OXBLOOD_INK, "Not playable")
 		return
+	Sfx.play("card_select")
 	_selected_card = card_index
 	var pieces := game.pieces_for_card(card_index)
 	if _selected_from == NO_SQUARE or game.targets(card_index, _selected_from).is_empty():
@@ -92,12 +186,16 @@ func press_card(card_index: int) -> void:
 
 
 func press_square(square: Vector2i) -> void:
+	if _is_opponent_acting:
+		_hurry()
+		return
 	if _can_answer_escape():
 		if game.escape_squares().has(square):
 			_escape(square)
 		else:
-			_set_hint("Your king is in check. Click a highlighted square to escape, or press Stay.", Palette.OXBLOOD)
-			Ui.shake(_escape_box)
+			_view.set_hint("Your king is in check. Click a highlighted square to escape, or press Stay.", Palette.OXBLOOD_INK, "Check")
+			Sfx.play("ui_error")
+			Feel.shake(_view.escape_box)
 		return
 	if not _can_act():
 		return
@@ -117,6 +215,8 @@ func press_square(square: Vector2i) -> void:
 	if _selected_card < 0 and MatchUiLogic.targets_for_piece(game, square).is_empty():
 		_refuse(square, "No card in your hand can move this piece")
 		return
+	if square != _selected_from:
+		Sfx.play("piece_pickup")
 	_selected_from = square
 	_show_selection()
 
@@ -125,304 +225,109 @@ func _start() -> void:
 	await _run(game.initial_events())
 
 
-# --- Layout -----------------------------------------------------------------
-
-func _build_layout() -> void:
-	var margin := MarginContainer.new()
-	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 16)
-	add_child(margin)
-	var row := Ui.hbox(16)
-	margin.add_child(row)
-	row.add_child(_left_column())
-	row.add_child(_centre_column())
-	row.add_child(_right_column())
-
-
-func _left_column() -> VBoxContainer:
-	var column := Ui.vbox(12)
-	column.custom_minimum_size.x = 280
-	var panel := Ui.panel("RaisedPanel")
-	var content := Ui.vbox(8)
-	panel.add_child(content)
-	content.add_child(Ui.label("OPPONENT", "Eyebrow"))
-	content.add_child(Ui.label(_names[OPPONENT], "H2"))
-	var tags := Ui.hbox(4)
-	tags.add_child(Ui.chip(String(_opponent_setup.get("difficulty", "")), Palette.OXBLOOD if Ui.is_boss(String(_opponent_setup.get("id", ""))) else Palette.IVORY_SOFT))
-	for artifact_id in game.artifacts(OPPONENT):
-		tags.add_child(Ui.chip(Ui.artifact_name(artifact_id), Palette.BRASS, Ui.artifact_desc(artifact_id)))
-	content.add_child(tags)
-	var hand_line := Ui.hbox(8)
-	hand_line.add_child(_fixed_label("Hand", 56))
-	_opponent_hand = Ui.hbox(3)
-	hand_line.add_child(_opponent_hand)
-	_opponent_hand_count = Ui.label("", "Caption")
-	_opponent_hand_count.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	hand_line.add_child(_opponent_hand_count)
-	content.add_child(hand_line)
-	var energy_line := Ui.hbox(8)
-	energy_line.add_child(_fixed_label("Energy", 56))
-	_opponent_energy = PipMeter.new()
-	_opponent_energy.color = Palette.OXBLOOD
-	_opponent_energy.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	energy_line.add_child(_opponent_energy)
-	_opponent_penalty_tag = _new_penalty_tag()
-	_opponent_penalty_tag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	energy_line.add_child(_opponent_penalty_tag)
-	content.add_child(energy_line)
-	_opponent_piles = Ui.label("", "Caption")
-	content.add_child(_opponent_piles)
-	column.add_child(panel)
-	var log_panel := Ui.panel("RaisedPanel")
-	log_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var log_column := Ui.vbox(8)
-	log_panel.add_child(log_column)
-	log_column.add_child(Ui.label("MATCH LOG", "Eyebrow"))
-	_log_scroll = ScrollContainer.new()
-	_log_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_log_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_log = Ui.vbox(2)
-	_log.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_log_scroll.add_child(_log)
-	log_column.add_child(_log_scroll)
-	column.add_child(log_panel)
-	return column
-
-
-func _centre_column() -> VBoxContainer:
-	var column := Ui.vbox(8)
-	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var top := Ui.hbox(16)
-	var turn := Ui.vbox(0)
-	turn.custom_minimum_size.x = 190
-	_turn_label = Ui.label("", "H2")
-	turn.add_child(_turn_label)
-	_turn_caption = Ui.label("", "Caption")
-	turn.add_child(_turn_caption)
-	top.add_child(turn)
-	_score = ScoreRace.new()
-	_score.names = _names
-	_score.target = game.target_score()
-	_score.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	top.add_child(_score)
-	column.add_child(top)
-	_board = BoardView.new()
-	_board.board_size = game.board_size()
-	_board.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_board.custom_minimum_size = Vector2(380, 380)
-	_board.square_clicked.connect(press_square)
-	_board.square_hovered.connect(_on_square_hovered)
-	_board.cancel_requested.connect(_cancel)
-	column.add_child(_board)
-	_hand_row = Ui.hbox(10)
-	_hand_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	_hand_row.custom_minimum_size.y = CardView.SIZE.y + 8
-	var hand_margin := MarginContainer.new()
-	hand_margin.add_theme_constant_override("margin_top", 22)
-	hand_margin.add_child(_hand_row)
-	column.add_child(hand_margin)
-	return column
-
-
-func _right_column() -> VBoxContainer:
-	var column := Ui.vbox(12)
-	column.custom_minimum_size.x = 250
-	var panel := Ui.panel("RaisedPanel")
-	var content := Ui.vbox(10)
-	panel.add_child(content)
-	content.add_child(Ui.label("YOU", "Eyebrow"))
-	var energy_line := Ui.hbox(12)
-	_energy = PipMeter.new()
-	_energy.pip_size = Vector2(22, 22)
-	_energy.gap = 6
-	_energy.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	energy_line.add_child(_energy)
-	_energy_label = Ui.label("", "Strong", Palette.BRASS)
-	energy_line.add_child(_energy_label)
-	content.add_child(energy_line)
-	_penalty_tag = _new_penalty_tag()
-	content.add_child(_penalty_tag)
-	_piles_label = Ui.label("", "Caption")
-	content.add_child(_piles_label)
-	content.add_child(Ui.artifact_chips(game.artifacts(PLAYER)))
-	column.add_child(panel)
-	var hint_panel := Ui.panel("InsetPanel")
-	_hint = Ui.wrapped("", "Body", 220)
-	_hint.custom_minimum_size.y = 64
-	hint_panel.add_child(_hint)
-	column.add_child(hint_panel)
-	column.add_child(_escape_panel())
-	column.add_child(Ui.spacer())
-	_redraw_button = Ui.button("Redraw")
-	_redraw_button.tooltip_text = "Only when no card in hand is playable: discard and draw a new hand"
-	_redraw_button.pressed.connect(_on_redraw)
-	column.add_child(_redraw_button)
-	_end_turn_button = Ui.button("End turn", "PrimaryButton")
-	_end_turn_button.custom_minimum_size.y = 44
-	_end_turn_button.tooltip_text = "End (or skip) your turn. Unplayed cards without Hold are discarded."
-	_end_turn_button.pressed.connect(_on_end_turn)
-	column.add_child(_end_turn_button)
-	var keys := Ui.label("Esc or right-click cancels a selection", "Caption")
-	keys.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	column.add_child(keys)
-	return column
-
-
-## The player's answer to a check: shown only while their escape is pending.
-func _escape_panel() -> PanelContainer:
-	_escape_box = Ui.panel()
-	_escape_box.add_theme_stylebox_override("panel", UiTheme.box(Palette.OXBLOOD.darkened(0.7), Palette.OXBLOOD, UiTheme.RADIUS, 12, 2))
-	_escape_box.visible = false
-	var column := Ui.vbox(8)
-	_escape_box.add_child(column)
-	column.add_child(Ui.label("Check!", "H2", Palette.OXBLOOD))
-	column.add_child(Ui.wrapped("Move your king to a highlighted square (no card needed), or stay put.", "Body", 210))
-	_escape_cost_label = Ui.wrapped("", "Caption", 210)
-	_escape_cost_label.add_theme_color_override("font_color", Palette.IVORY_SOFT)
-	column.add_child(_escape_cost_label)
-	_stay_button = Ui.button("Stay (keep the king in check)")
-	_stay_button.tooltip_text = "Decline the escape: your king stays where it is"
-	_stay_button.pressed.connect(_on_stay)
-	column.add_child(_stay_button)
-	return _escape_box
-
-
-func _new_penalty_tag() -> Label:
-	var tag := Ui.label("", "Caption", Palette.OXBLOOD)
-	tag.tooltip_text = "Check escapes made this round come off that side's next turn"
-	tag.mouse_filter = Control.MOUSE_FILTER_PASS
-	return tag
-
-
-func _fixed_label(text: String, width: float) -> Label:
-	var node := Ui.label(text, "Caption")
-	node.custom_minimum_size.x = width
-	node.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	return node
-
-
-# --- State -> view ----------------------------------------------------------
-
 func _sync() -> void:
-	_sync_tokens()
+	_view.sync_tokens()
 	_sync_hand()
-	_sync_panels()
+	_view.sync_panels()
 	_show_selection()
 
 
-func _sync_tokens() -> void:
-	_board.holes = game.holes()
-	var alive: Array = []
-	for side in [PLAYER, OPPONENT]:
-		for piece in game.pieces(side):
-			alive.append(piece.uid)
-			var token := _board.token(piece.uid)
-			if token == null:
-				token = PieceToken.create(48)
-			token.show_match_piece(piece)
-			token.is_in_check = piece.type == "king" and game.in_check(side)
-			_board.set_token(piece.uid, token, piece.square)
-	for key in _board.token_keys():
-		if not alive.has(key):
-			_board.remove_token(key)
-	_board.queue_redraw()
-
-
+## Rebuilds the hand; cards that weren't shown before deal in one after another.
 func _sync_hand() -> void:
-	Ui.clear(_hand_row)
+	var shown_uids: Array[int] = []
+	for view in _card_views:
+		shown_uids.append(view.card.uid)
+	Ui.clear(_view.hand_row)
 	_card_views.clear()
 	var hand := game.hand(PLAYER)
-	var is_my_turn := _is_my_turn()
+	var is_my_turn := _view.is_player_turn()
+	var dealt := 0
 	for card_index in hand.size():
 		var view := CardView.create(hand[card_index])
 		view.is_playable = is_my_turn and game.is_card_playable(card_index)
+		view.key_hint = _card_key(card_index)
+		view.drag_payload = {"card_index": card_index}
 		view.pressed.connect(press_card.bind(card_index))
-		_hand_row.add_child(view)
+		view.drag_started.connect(_on_card_drag_started.bind(card_index))
+		if not shown_uids.has(hand[card_index].uid):
+			view.deal_delay = Motion.time("deal_stagger") * dealt
+			dealt += 1
+		_view.hand_row.add_child(view)
 		_card_views.append(view)
 
 
-func _sync_panels() -> void:
-	_energy.total = game.max_energy(PLAYER)
-	_energy.value = game.energy(PLAYER)
-	_energy_label.text = "%d / %d energy" % [game.energy(PLAYER), game.max_energy(PLAYER)]
-	_piles_label.text = "Draw %d · Discard %d · Deck %d" % [game.draw_pile_size(PLAYER), game.discard_size(PLAYER), game.deck_size(PLAYER)]
-	_opponent_energy.total = game.max_energy(OPPONENT)
-	_opponent_energy.value = game.energy(OPPONENT)
-	_opponent_piles.text = "Draw %d · Discard %d · Deck %d" % [game.draw_pile_size(OPPONENT), game.discard_size(OPPONENT), game.deck_size(OPPONENT)]
-	_sync_opponent_hand()
-	_sync_penalties()
-	_score.set_scores(game.score(PLAYER), game.score(OPPONENT))
-	var is_my_turn := _is_my_turn()
-	_turn_label.text = "Your turn" if game.current_side() == PLAYER else "%s's turn" % _names[OPPONENT]
-	_turn_label.add_theme_color_override("font_color", Palette.IVORY if game.current_side() == PLAYER else Palette.OXBLOOD)
-	_turn_caption.text = "Round %d of %d" % [game.current_round(), game.max_rounds()]
-	if game.pending_escape_side() == PLAYER:
-		_turn_label.text = "Check!"
-		_turn_label.add_theme_color_override("font_color", Palette.OXBLOOD)
-	var redraw_cost := int(GameConfig.value("match", "redraw_cost"))
-	_redraw_button.text = "Redraw hand · %d energy" % redraw_cost
-	_redraw_button.disabled = not (is_my_turn and game.can_redraw())
-	_end_turn_button.disabled = not is_my_turn
-	_end_turn_button.text = "End turn" if not game.legal_plays(PLAYER).is_empty() or not is_my_turn else "End turn (nothing playable)"
-
-
-func _sync_penalties() -> void:
-	for side in [PLAYER, OPPONENT]:
-		var tag := _penalty_tag if side == PLAYER else _opponent_penalty_tag
-		var penalty := game.escape_penalty(side)
-		tag.text = "−%d next turn" % penalty if penalty > 0 else ""
-
-
-func _sync_opponent_hand() -> void:
-	Ui.clear(_opponent_hand)
-	var hand_size := game.hand(OPPONENT).size()
-	for i in hand_size:
-		_opponent_hand.add_child(CardView.create_back())
-	if hand_size > 0:
-		_opponent_hand_count.text = "%d hidden" % hand_size
-	else:
-		_opponent_hand_count.text = "no cards" if game.current_side() == OPPONENT else "refills on its turn"
+## Dragging a card selects it (the press that started the drag may have toggled it off).
+func _on_card_drag_started(card_index: int) -> void:
+	if _selected_card != card_index:
+		press_card(card_index)
 
 
 func _show_selection() -> void:
+	_show_marks()
+	_update_pickup()
+
+
+## The selected piece floats above its shadow; the previously lifted one settles.
+func _update_pickup() -> void:
+	var piece := game.piece_at(_selected_from) if _selected_from != NO_SQUARE and _can_act() else null
+	var token := _view.board.token(piece.uid) if piece != null else null
+	if token == _lifted:
+		return
+	_view.set_lift(_lifted, 0.0)
+	_lifted = token
+	_view.set_lift(token, PICKUP_LIFT)
+
+
+func _show_marks() -> void:
 	_targets.clear()
 	for i in _card_views.size():
 		_card_views[i].is_selected = i == _selected_card
 		_card_views[i].is_highlighted = false
 	var is_prompt := not game.is_over() and game.pending_escape_side() == PLAYER
-	_escape_box.visible = is_prompt
+	_view.escape_box.visible = is_prompt
+	_view.hint_box.visible = not is_prompt
+	_view.keys_box.visible = not is_prompt
 	if is_prompt:
 		_show_escape_prompt()
 		return
-	_board.threats.clear()
+	_view.board.threats.clear()
 	if game.pending_escape_side() != -1:
-		_board.threats.assign(_last_checkers)
-	if not _is_my_turn():
-		_board.clear_highlights()
-		_set_hint("Match over." if game.is_over() else "%s is thinking…" % _names[OPPONENT], Palette.IVORY_FAINT)
+		_view.board.threats.assign(_fx.last_checkers)
+	if game.pending_escape_side() == OPPONENT:
+		# Still the player's turn (the header says so): the opponent answers the check.
+		_view.board.clear_highlights()
+		_view.set_hint("%s is answering your check…" % _names[OPPONENT], Palette.IVORY_FAINT, "Check")
+		return
+	if not _view.is_player_turn():
+		_view.board.clear_highlights()
+		if game.is_over():
+			var result := game.result()
+			var player_won := int(result["winner"]) == PLAYER
+			_view.set_hint(("You win. " if player_won else "You lose. ") + EventText.reason_text(result["reason"], player_won), Palette.IVORY_SOFT, "Match over")
+		else:
+			_view.set_hint("%s is thinking…" % _names[OPPONENT], Palette.IVORY_FAINT, "Opponent's turn")
 		return
 	if _selected_card >= 0:
 		var card := game.hand(PLAYER)[_selected_card]
 		var pieces := game.pieces_for_card(_selected_card)
 		if _selected_from == NO_SQUARE:
-			_board.set_highlights(pieces, [], [])
-			_set_hint("%s selected. Click a highlighted piece to move it." % card.display_name(), Palette.BRASS)
+			_view.board.set_highlights(pieces, [], [])
+			_view.set_hint("%s selected. Click a highlighted piece to move it." % card.display_name(), Palette.BRASS, "Card selected")
 			return
 		_targets = game.targets(_selected_card, _selected_from)
 		_highlight_targets(pieces)
-		_set_hint("Click a target square. Red squares capture." + _ignite_warning(), Palette.BRASS)
+		_view.set_hint("Click a target square. A dot moves there; a ring captures." + _ignite_warning(), Palette.BRASS, "Choose a target")
 		return
 	if _selected_from != NO_SQUARE:
 		_targets = MatchUiLogic.targets_for_piece(game, _selected_from)
 		_highlight_targets([])
-		_set_hint("Click a target. The cheapest card that allows the move is played." + _ignite_warning(), Palette.BRASS)
+		_view.set_hint("Click a target. The cheapest card that allows the move is played." + _ignite_warning(), Palette.BRASS, "Choose a target")
 		return
-	_board.set_highlights(MatchUiLogic.movable_pieces(game), [], [])
+	_view.board.set_highlights(MatchUiLogic.movable_pieces(game), [], [])
 	if game.legal_plays(PLAYER).is_empty():
-		_set_hint(_stuck_hint(), Palette.IVORY_SOFT)
+		_view.set_hint(_stuck_hint(), Palette.IVORY_SOFT, "Nothing to play")
 	else:
-		_set_hint("Pick a card, or click one of your highlighted pieces.", Palette.IVORY_SOFT)
+		_view.set_hint("Pick a card, or click one of your highlighted pieces.", Palette.IVORY_SOFT, "Your turn")
 
 
 func _show_escape_prompt() -> void:
@@ -431,19 +336,24 @@ func _show_escape_prompt() -> void:
 	for piece in game.pieces(PLAYER):
 		if piece.type == "king":
 			king_square = piece.square
-	_board.threats.assign(_last_checkers)
-	_board.set_highlights([], targets["moves"], targets["captures"], king_square)
-	_escape_cost_label.text = "Costs %d energy from your next turn · next turn: %d/%d" % [
+	_view.board.threats.assign(_fx.last_checkers)
+	_view.board.set_highlights([], targets["moves"], targets["captures"], king_square)
+	var squares := game.escape_squares()
+	var stay_key := A11y.key_label(&"rc_escape_no")
+	if squares.size() == 1:
+		_view.escape_keys_label.text = "%s escape to %s · %s stay" % [MatchView.keys_text(&"rc_escape_yes"), EventText.square_name(squares[0]), stay_key]
+	else:
+		_view.escape_keys_label.text = "Click a square to escape · %s stay" % stay_key
+	_view.escape_cost_label.text = "Costs %d energy from your next turn · next turn: %d/%d" % [
 		MatchUiLogic.escape_cost(), MatchUiLogic.next_turn_energy(game, PLAYER, 1), game.max_energy(PLAYER)]
-	_stay_button.disabled = _is_busy
-	_set_hint("Check! %s attacks your king." % _names[OPPONENT], Palette.OXBLOOD)
+	_view.stay_button.disabled = _is_busy
+	_view.set_hint("Check! %s attacks your king." % _names[OPPONENT], Palette.OXBLOOD_INK, "Check")
 
 
 func _stuck_hint() -> String:
 	if not game.can_redraw():
 		return "No playable cards left. End your turn."
-	var deck: Array = Game.match_setup["player"]["deck"]
-	if not MatchUiLogic.redraw_leaves_a_play(game.energy(PLAYER), int(GameConfig.value("match", "redraw_cost")), deck):
+	if not _view.redraw_helps():
 		return "Nothing in your hand can move, and a redraw wouldn't leave enough energy to play any card in your deck. End your turn."
 	return "Nothing in your hand can move. Redraw for a new hand, or end your turn."
 
@@ -465,12 +375,7 @@ func _highlight_targets(movable: Array[Vector2i]) -> void:
 			captures.append(square)
 		else:
 			moves.append(square)
-	_board.set_highlights(movable, moves, captures, _selected_from)
-
-
-func _set_hint(text: String, color: Color) -> void:
-	_hint.text = text
-	_hint.add_theme_color_override("font_color", color)
+	_view.board.set_highlights(movable, moves, captures, _selected_from)
 
 
 func _on_square_hovered(square: Vector2i) -> void:
@@ -481,15 +386,8 @@ func _on_square_hovered(square: Vector2i) -> void:
 		_card_views[i].is_highlighted = not play.is_empty() and play["card_index"] == i
 
 
-# --- Actions ----------------------------------------------------------------
-
 func _can_act() -> bool:
-	return not _is_busy and _is_my_turn()
-
-
-## The player's own turn with nothing pending: cards, Redraw and End turn work.
-func _is_my_turn() -> bool:
-	return not game.is_over() and game.pending_escape_side() == -1 and game.current_side() == PLAYER
+	return not _is_busy and _view.is_player_turn()
 
 
 func _can_answer_escape() -> bool:
@@ -498,6 +396,8 @@ func _can_answer_escape() -> bool:
 
 ## Esc / right-click: drop the selection. During an escape prompt it only keeps the prompt.
 func _cancel() -> void:
+	if _selected_card >= 0 or _selected_from != NO_SQUARE:
+		Sfx.play("ui_cancel")
 	_selected_card = -1
 	_selected_from = NO_SQUARE
 	if _can_act() or _can_answer_escape():
@@ -507,20 +407,24 @@ func _cancel() -> void:
 func _escape(to: Vector2i) -> void:
 	if not _can_answer_escape():
 		return
+	_show_busy("Check", "Your king escapes to %s…" % EventText.square_name(to))
 	await _run(game.escape(to))
 
 
 func _on_stay() -> void:
 	if not _can_answer_escape():
 		return
+	_show_busy("Check", "Your king stays in check…")
 	await _run(game.decline_escape())
 
 
 func _refuse(square: Vector2i, reason: String) -> void:
-	var token := _board.token(game.piece_at(square).uid)
+	Sfx.play("ui_error")
+	var token := _view.board.token(game.piece_at(square).uid)
 	if token != null:
-		_flash_token(token, Palette.OXBLOOD)
-	_set_hint(reason, Palette.OXBLOOD)
+		_view.flash_token(token, Palette.OXBLOOD)
+		Feel.shake(token, 0.6)
+	_view.set_hint(reason, Palette.OXBLOOD_INK, "Not allowed")
 
 
 func _play_selected(to: Vector2i) -> void:
@@ -530,15 +434,39 @@ func _play_selected(to: Vector2i) -> void:
 	if play.is_empty():
 		return
 	var view := _card_views[play["card_index"]]
-	view.create_tween().tween_property(view, "modulate:a", 0.0, Ui.FAST)
+	_fx.fly_card(view, _view.board.square_centre(play["from"]))
+	_take_from_hand(view)
 	_selected_card = -1
 	_selected_from = NO_SQUARE
+	_lifted = null  # the move animation takes this piece's lift over
+	_show_busy("Playing", "Playing %s…" % view.card.display_name())
 	await _run(game.play(play["card_index"], play["from"], play["to"]))
+
+
+## The played card leaves the hand at once (its ghost flies to the piece) and the
+## key caps renumber before the move plays. A gap holds its place while the ghost
+## leaves, then closes, so the neighbours slide in instead of jumping under it.
+func _take_from_hand(view: CardView) -> void:
+	var gap := Control.new()
+	gap.custom_minimum_size.x = view.size.x
+	gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_view.hand_row.add_child(gap)
+	_view.hand_row.move_child(gap, view.get_index())
+	_card_views.erase(view)
+	_view.hand_row.remove_child(view)
+	view.queue_free()
+	var close := Motion.tween(gap, "in")
+	close.tween_property(gap, "custom_minimum_size:x", 0.0, Motion.time("card_fly"))
+	close.tween_callback(gap.queue_free)
+	for i in _card_views.size():
+		_card_views[i].key_hint = _card_key(i)
+		_card_views[i].queue_redraw()
 
 
 func _on_redraw() -> void:
 	if _can_act() and game.can_redraw():
 		_cancel()
+		_show_busy("Redrawing", "Discarding your hand and drawing a new one…")
 		await _run(game.redraw())
 
 
@@ -547,30 +475,56 @@ func _on_end_turn() -> void:
 		return
 	_selected_card = -1
 	_selected_from = NO_SQUARE
+	_show_busy("Ending turn", "Your unheld cards go to the discard pile…")
 	await _run(game.end_turn())
+
+
+## The hint says what is happening the moment an action starts (it plays out
+## over several animated beats before the next decision).
+func _show_busy(title: String, text: String) -> void:
+	_view.escape_box.visible = false
+	_view.hint_box.visible = true
+	_view.set_hint(text, Palette.IVORY_SOFT, title)
 
 
 ## Animates the events, then lets the opponent act (its turn, or its answer to
 ## a check) until the player has to decide something or the match is over.
 func _run(events: Array[Dictionary]) -> void:
 	_is_busy = true
-	_board.clear_highlights()
-	await _apply(events)
+	_view.end_turn_button.disabled = true
+	_view.redraw_button.disabled = true
+	_view.board.clear_highlights()
+	_update_pickup()
+	await _fx.apply(events)
 	await _opponent_turn()
+	_fx.clear_ghosts()
 	_is_busy = false
 	_sync()
 	if game.is_over():
+		# A beat on the final board before the result (anticipation).
+		_is_busy = true
+		await _fx.wait(Motion.time("over_delay"))
+		_is_busy = false
 		_show_match_over()
 
 
 ## Plays opponent actions one at a time. Stops when the player must act: their
 ## turn, or their escape prompt (the opponent's turn resumes after the answer).
+## Holding rc_hurry or clicking the board plays the rest of it at "instant" speed;
+## an open modal (settings, deck) holds it until it closes.
 func _opponent_turn() -> void:
 	var actions := 0
 	while not game.is_over() and _opponent_must_act():
-		_sync_panels()
+		_is_opponent_acting = true
+		_view.sync_panels()
 		_show_selection()
-		await _wait(_move_delay)
+		if Input.is_action_pressed(&"rc_hurry"):
+			_hurry()
+		_show_hurry_hint()
+		# The first action also waits for the turn banner to go.
+		await _fx.wait(maxf(_move_delay * Motion.speed(), _fx.banner_time_left()))
+		while A11y.is_modal_open(self):
+			await _fx.wait(MODAL_POLL)
 		var is_escape := game.pending_escape_side() == OPPONENT
 		var action := _ai.choose_action(game)
 		actions += 1
@@ -580,7 +534,28 @@ func _opponent_turn() -> void:
 		if events.size() == 1 and events[0]["type"] == "error":
 			push_error("Opponent action %s refused (%s)" % [action, events[0]["reason"]])
 			events = game.decline_escape() if is_escape else game.end_turn()
-		await _apply(events)
+		await _fx.apply(events)
+	_is_opponent_acting = false
+	Motion.hurry = false
+	_show_hurry_hint()
+
+
+## The rest of the opponent's turn plays at "instant" speed (the saved animation
+## speed is untouched).
+func _hurry() -> void:
+	if Motion.hurry:
+		return
+	Motion.hurry = true
+	_show_hurry_hint()
+
+
+func _show_hurry_hint() -> void:
+	if not _is_opponent_acting:
+		_view.hurry_label.text = ""
+	elif Motion.hurry:
+		_view.hurry_label.text = "Hurrying…"
+	else:
+		_view.hurry_label.text = "Hold %s or click the board to hurry" % A11y.key_label(&"rc_hurry")
 
 
 func _opponent_must_act() -> bool:
@@ -596,283 +571,11 @@ func _make_ai(setup: Dictionary) -> MatchAI:
 	return MatchAI.new(OPPONENT, int(_opponent_setup.get("search_depth", 1)), float(_opponent_setup.get("random_chance", 0.0)), rng, _opponent_setup.get("deck", []))
 
 
-func _wait(seconds: float) -> void:
-	var tween := create_tween()
-	tween.tween_interval(seconds)
-	await tween.finished
-
-
-# --- Event feedback -----------------------------------------------------------
-
-func _apply(events: Array[Dictionary]) -> void:
-	var draws := [0, 0]
-	for event in events:
-		_log_line(EventText.describe(event, _names), event["type"])
-		match event["type"]:
-			"draw":
-				draws[event["side"]] += 1
-			"turn_start", "energy", "redraw", "card_played":
-				_on_side_change(event)
-				_sync_penalties()
-			"check":
-				await _animate_check(event)
-			"escape":
-				_on_escape(event)
-			"escape_declined":
-				_show_toast("%s %s in check" % [_names[event["side"]], "stay" if event["side"] == PLAYER else "stays"], Palette.IVORY_SOFT)
-			"move":
-				await _animate_move(event)
-			"capture":
-				await _animate_capture(event)
-			"shield_block":
-				await _animate_block(event)
-			"explosion":
-				await _animate_explosion(event)
-			"score":
-				_score.set_scores(game.score(PLAYER), game.score(OPPONENT))
-			"ignite", "burn_tick":
-				await _animate_burn(event)
-			"burn_out":
-				await _animate_burn_out(event)
-			"promotion":
-				await _animate_promotion(event)
-			"shuffle":
-				Ui.pop(_piles_label if event["side"] == PLAYER else _opponent_piles, 1.15)
-	for side in [PLAYER, OPPONENT]:
-		if draws[side] > 0:
-			_log_line("%s drew %d card%s" % [_names[side], draws[side], "" if draws[side] == 1 else "s"], "draw")
-	if not events.is_empty():
-		_sync_tokens()
-
-
-func _on_side_change(event: Dictionary) -> void:
-	if event["type"] == "card_played" and event["side"] == OPPONENT:
-		_turn_caption.text = "%s plays %s" % [_names[OPPONENT], Ui.piece_name(event["card_type"])]
-		if _opponent_hand.get_child_count() > 0:
-			_opponent_hand.get_child(0).queue_free()
-		_opponent_energy.value = event["energy"]
-		return
-	if event["type"] == "card_played":
-		_energy.value = event["energy"]
-		_energy_label.text = "%d / %d energy" % [event["energy"], game.max_energy(PLAYER)]
-		return
-	if event["type"] == "turn_start":
-		_turn_label.text = "Your turn" if event["side"] == PLAYER else "%s's turn" % _names[OPPONENT]
-		_turn_label.add_theme_color_override("font_color", Palette.IVORY if event["side"] == PLAYER else Palette.OXBLOOD)
-		_turn_caption.text = "Round %d of %d" % [event["round"], game.max_rounds()]
-		_sync_opponent_hand()
-		Ui.pop(_turn_label, 1.08)
-
-
-func _animate_check(event: Dictionary) -> void:
-	_last_checkers.assign(event["checkers"])
-	_board.threats.assign(_last_checkers)
-	var king_square: Vector2i = event["king_square"]
-	var king := _board.token(game.piece_at(king_square).uid) if game.piece_at(king_square) != null else null
-	if king != null:
-		king.is_in_check = true
-		_flash_token(king, Palette.OXBLOOD)
-	_board.flash_squares(_last_checkers, Palette.OXBLOOD, 0.5)
-	Ui.float_text(_board, "Check!", _board.square_centre(king_square), Palette.OXBLOOD, 26)
-	if not event["can_escape"]:
-		var who := "You have" if event["side"] == PLAYER else "%s has" % _names[OPPONENT]
-		_show_toast("Check! %s no safe square to escape to" % who, Palette.OXBLOOD)
-	await _wait(0.35)
-
-
-func _on_escape(event: Dictionary) -> void:
-	_sync_penalties()
-	var to := EventText.square_name(event["to"])
-	if event["side"] == PLAYER:
-		_show_toast("You escape to %s: %d less energy next turn" % [to, event["cost"]], Palette.BRASS)
-	else:
-		_show_toast("Check! %s escapes to %s: they'll have %d less energy next turn" % [_names[OPPONENT], to, event["cost"]], Palette.BRASS)
-
-
-## A short message over the top of the board (check answers); replaces the previous one.
-func _show_toast(text: String, color: Color) -> void:
-	if is_instance_valid(_toast):
-		_toast.queue_free()
-	_toast = Ui.panel()
-	_toast.add_theme_stylebox_override("panel", UiTheme.box(Palette.WALNUT_DEEP, color, UiTheme.RADIUS, 10, 1))
-	_toast.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_toast.z_index = 30
-	var text_label := Ui.label(text, "Strong", color)
-	_toast.add_child(text_label)
-	_board.add_child(_toast)
-	_toast.reset_size()
-	# Centred on the board's middle ranks, away from the back ranks where kings stand.
-	_toast.position = ((_board.size - _toast.size) / 2.0).floor()
-	var tween := _toast.create_tween()
-	_toast.modulate.a = 0.0
-	tween.tween_property(_toast, "modulate:a", 1.0, Ui.FAST)
-	tween.tween_interval(2.4)
-	tween.tween_property(_toast, "modulate:a", 0.0, Ui.NORMAL)
-	tween.tween_callback(_toast.queue_free)
-
-
-func _animate_move(event: Dictionary) -> void:
-	_board.last_move = [event["from"], event["to"]]
-	var tween := _board.move_token(event["uid"], event["to"])
-	if tween != null:
-		await tween.finished
-
-
-func _animate_capture(event: Dictionary) -> void:
-	var victim := _board.forget_token(event["uid"])
-	var at := _board.square_centre(event["square"])
-	if victim != null:
-		_board.move_child(victim, 0)
-		var tween := victim.create_tween().set_parallel()
-		tween.tween_property(victim, "scale", Vector2.ONE * 1.35, 0.22).set_ease(Tween.EASE_OUT)
-		tween.tween_property(victim, "modulate:a", 0.0, 0.22)
-		tween.chain().tween_callback(victim.queue_free)
-	if event["points"] > 0:
-		Ui.float_text(_board, "+%d" % event["points"], at, _side_color(event["by_side"]), 26)
-	await _wait(0.18)
-
-
-func _animate_block(event: Dictionary) -> void:
-	var defender := _board.token(event["uid"])
-	if defender != null:
-		defender.has_shield = false
-		_flash_token(defender, Palette.STEEL)
-	_board.flash_squares([event["square"]], Palette.STEEL)
-	Ui.float_text(_board, "Blocked!", _board.square_centre(event["square"]), Palette.STEEL, 20)
-	var attacker := _board.token(event["attacker_uid"]) if event["attacker_uid"] >= 0 else null
-	if attacker == null:
-		await _wait(0.2)
-		return
-	var home := attacker.position
-	var lunge := home.lerp(home + _board.square_centre(event["square"]) - _board.square_centre(event["attacker_square"]), 0.45)
-	attacker.z_index = 5
-	var tween := attacker.create_tween()
-	tween.tween_property(attacker, "position", lunge, 0.1).set_ease(Tween.EASE_OUT)
-	tween.tween_property(attacker, "position", home, 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	await tween.finished
-	attacker.z_index = 0
-
-
-func _animate_explosion(event: Dictionary) -> void:
-	var squares: Array = event["squares"].duplicate()
-	squares.append(event["square"])
-	_board.flash_squares(squares, Palette.EMBER, 0.45)
-	Ui.float_text(_board, "Boom!", _board.square_centre(event["square"]), Palette.EMBER, 28)
-	Ui.shake(_board)
-	await _wait(0.15)
-
-
-func _animate_burn(event: Dictionary) -> void:
-	var token := _board.token(event["uid"])
-	if token != null:
-		token.burn_left = event["turns_left"]
-		token.queue_redraw()
-		_flash_token(token, Palette.EMBER)
-	var text := "Ignited" if event["type"] == "ignite" else "Burn %d" % event["turns_left"]
-	Ui.float_text(_board, text, _board.square_centre(event["square"]) + Vector2(0, -20), Palette.EMBER, 16)
-	await _wait(0.12)
-
-
-func _animate_burn_out(event: Dictionary) -> void:
-	var victim := _board.forget_token(event["uid"])
-	if victim != null:
-		var tween := victim.create_tween()
-		tween.tween_property(victim, "modulate", Color(0.2, 0.1, 0.05, 0.0), 0.3)
-		tween.tween_callback(victim.queue_free)
-	Ui.float_text(_board, "Burned out +%d" % event["points"], _board.square_centre(event["square"]), Palette.EMBER, 18)
-	await _wait(0.25)
-
-
-func _animate_promotion(event: Dictionary) -> void:
-	var token := _board.token(event["uid"])
-	if token != null:
-		token.piece_type = event["piece_type"]
-		token.is_promoted = true
-		token.queue_redraw()
-		Ui.pop(token, 1.3)
-	Ui.float_text(_board, "Promoted!", _board.square_centre(event["square"]), Palette.BRASS, 20)
-	await _wait(0.2)
-
-
-func _flash_token(token: PieceToken, color: Color) -> void:
-	var tween := token.create_tween()
-	tween.tween_property(token, "flash_color", Color(color, 0.7), 0.06)
-	tween.tween_property(token, "flash_color", Color(color, 0.0), 0.25)
-
-
-func _side_color(side: int) -> Color:
-	return Palette.PIECE_IVORY if side == PLAYER else Palette.OXBLOOD
-
-
-func _log_line(text: String, event_type: String) -> void:
-	if text == "":
-		return
-	var line := Ui.wrapped(text, "Caption", 230)
-	if event_type == "turn_start":
-		line.theme_type_variation = "Eyebrow"
-	elif event_type in ["capture", "burn_out", "explosion", "match_over"]:
-		line.add_theme_color_override("font_color", Palette.IVORY)
-	_log.add_child(line)
-	while _log.get_child_count() > MAX_LOG_LINES:
-		var oldest := _log.get_child(0)
-		_log.remove_child(oldest)
-		oldest.queue_free()
-	_scroll_log_down.call_deferred()
-
-
-func _scroll_log_down() -> void:
-	_log_scroll.scroll_vertical = int(_log_scroll.get_v_scroll_bar().max_value)
-
-
-# --- Match over ---------------------------------------------------------------
-
 func _show_match_over() -> void:
-	var result := game.result()
-	var player_won := int(result["winner"]) == PLAYER
-	var overlay := Control.new()
-	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	add_child(overlay)
-	var scrim := ColorRect.new()
-	scrim.color = Palette.SCRIM
-	scrim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	overlay.add_child(scrim)
-	var centre := CenterContainer.new()
-	centre.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	overlay.add_child(centre)
-	var panel := Ui.panel("ModalPanel")
-	panel.custom_minimum_size = Vector2(460, 0)
-	centre.add_child(panel)
-	var column := Ui.vbox(12)
-	column.alignment = BoxContainer.ALIGNMENT_CENTER
-	panel.add_child(column)
-	column.add_child(_centred(Ui.label("MATCH OVER · ROUND %d" % int(result["rounds"]), "Eyebrow")))
-	column.add_child(_centred(Ui.label("Victory" if player_won else "Defeat", "Title", Palette.BRASS if player_won else Palette.OXBLOOD)))
-	column.add_child(_centred(Ui.label(EventText.reason_text(result["reason"], player_won), "Strong")))
-	var scores: Array = result["scores"]
-	column.add_child(_centred(Ui.label("You %d  —  %d %s" % [scores[0], scores[1], _names[OPPONENT]], "Stat")))
-	var next_text := "Continue"
-	if player_won:
-		var is_boss: bool = Game.run.current_node_info().get("type", "") == "boss"
-		column.add_child(_centred(Ui.label("The boss is beaten." if is_boss else "+%d training points and a new card to choose" % int(GameConfig.value("economy", "win_points")), "Body", Palette.BRASS)))
-	else:
-		column.add_child(_centred(Ui.label("Your run ends here.", "Body")))
-		next_text = "See the run summary"
-	var button := Ui.button(next_text, "PrimaryButton")
-	button.custom_minimum_size = Vector2(240, 44)
-	button.pressed.connect(_finish_match)
-	column.add_child(Ui.centered(button))
-	_over_status = Ui.status_label()
-	_over_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	column.add_child(_over_status)
-	Ui.fade_in(overlay)
-	panel.pivot_offset = panel.size / 2.0
-	panel.scale = Vector2.ONE * 0.94
-	panel.create_tween().tween_property(panel, "scale", Vector2.ONE, Ui.NORMAL).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-
-
-func _centred(node: Label) -> Label:
-	node.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	return node
+	var panel := MatchOverPanel.new(game.result(), _names)
+	panel.continue_pressed.connect(_finish_match)
+	add_child(panel)
+	_over_status = panel.status
 
 
 func _finish_match() -> void:
@@ -884,6 +587,6 @@ func _finish_match() -> void:
 		_is_finishing = false
 		push_warning("finish_match refused: %s" % result["error"])
 		if _over_status != null:
-			Ui.flash_status(_over_status, result["error"])
+			Feel.flash_status(_over_status, result["error"])
 		return
 	Game.show_phase()

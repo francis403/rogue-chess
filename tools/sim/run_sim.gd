@@ -4,11 +4,14 @@ extends SceneTree
 ## Exit code 0 only when nothing failed.
 
 const SimDriver := preload("res://tools/sim/sim_driver.gd")
-const SIM_DIR := "user://sim/cli/"
 const DEFAULT_RUNS := 100
 const DEFAULT_SEED := 1
 const MAX_PRINTED_FAILURES := 20
 const PROGRESS_EVERY := 10
+
+## This process's own folder (meta, run logs, settings), so two sims, or a sim and a
+## GUT run, never share files. Removed again at the end of _initialize.
+var sim_dir := "user://sim/cli_p%d/" % OS.get_process_id()
 
 
 func _initialize() -> void:
@@ -16,7 +19,8 @@ func _initialize() -> void:
 	var runs := int(args.get("runs", DEFAULT_RUNS))
 	var seed_value := int(args.get("seed", DEFAULT_SEED))
 	print("rogue-chess sim: %d runs, seed %d" % [runs, seed_value])
-	var driver := SimDriver.new(SIM_DIR, seed_value)
+	_use_temp_settings()
+	var driver := SimDriver.new(sim_dir, seed_value)
 	for run_index in runs:
 		driver.run_once(run_index)
 		if (run_index + 1) % PROGRESS_EVERY == 0:
@@ -27,7 +31,18 @@ func _initialize() -> void:
 	for failure in driver.failures.slice(0, MAX_PRINTED_FAILURES):
 		print("FAIL " + failure)
 	print("RESULT: %s" % ("PASS" if driver.failure_count() == 0 else "FAIL"))
+	SimDriver.remove_dir(sim_dir)
+	DirAccess.remove_absolute("user://sim/")  # only once empty
 	quit(0 if driver.failure_count() == 0 else 1)
+
+
+## The sim plays no UI, but nothing it loads may save to the player's settings:
+## point the Settings autoload at a temp file in sim_dir (removed at the end of _initialize).
+func _use_temp_settings() -> void:
+	var settings := root.get_node_or_null("Settings")
+	if settings != null:
+		DirAccess.make_dir_recursive_absolute(sim_dir)
+		settings.use_path(sim_dir + "settings.json")
 
 
 func _parse_args() -> Dictionary:

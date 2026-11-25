@@ -1,12 +1,17 @@
 extends RefCounted
 ## Shared helpers for run tests. Everything is written under a temp folder in
-## user:// so tests never touch the real meta.json or logs.
+## user:// so tests never touch the real meta.json or logs. The folder belongs to
+## this process (tests/hooks/test_tmp.gd), so parallel test runs never collide.
 
-const TEMP_ROOT := "user://test_tmp_run/"
+const TestTmp := preload("res://tests/hooks/test_tmp.gd")
+
+
+static func temp_root() -> String:
+	return TestTmp.dir("run")
 
 
 static func temp_dir(test_name: String) -> String:
-	var dir := TEMP_ROOT + test_name + "/"
+	var dir := temp_root() + test_name + "/"
 	remove_dir(dir)
 	DirAccess.make_dir_recursive_absolute(dir)
 	return dir
@@ -21,7 +26,7 @@ static func remove_dir(dir_path: String) -> void:
 	for file_name in dir.get_files():
 		DirAccess.remove_absolute(dir_path.path_join(file_name))
 	DirAccess.remove_absolute(dir_path)
-	DirAccess.remove_absolute(TEMP_ROOT)
+	DirAccess.remove_absolute(temp_root())  # only once empty
 
 
 static func new_session(dir: String, seed_value: int = 1) -> RunSession:

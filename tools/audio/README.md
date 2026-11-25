@@ -1,0 +1,38 @@
+# Audio generator
+
+Every sound in RogueChess is synthesized here: original, offline, deterministic (fixed seeds), Python 3 standard library only.
+
+```sh
+python3 -I tools/audio/generate.py              # all sounds + music (~40 s)
+python3 -I tools/audio/generate.py capture ui_click   # only these ids
+python3 -I tools/audio/check.py                 # measure everything (exit 1 on a problem)
+python3 -I tools/audio/check.py --compare DIR   # also print centroid/presence of another sfx folder (before/after)
+/Applications/Godot.app/Contents/MacOS/Godot --headless --import   # re-import into Godot
+```
+
+Output: `assets/audio/sfx/<id>.wav` and `assets/audio/music/<id>.wav`, all mono, 16-bit, 22.05 kHz (about 12.9 MB in total). The id is the function name in `generate.py` and the key in `config/ux.json` → `audio.sounds` / `audio.music`.
+
+**Variants**: sounds that play many times a minute (`ui_hover`, `ui_click`, `card_draw`, `card_hover`, `piece_pickup`, `piece_move`, `piece_land_light/medium/heavy`, `capture`, `capture_against`) are rendered 3 times: `<id>.wav`, `<id>_2.wav`, `<id>_3.wav`. The function takes `v` (0, 1, 2), which changes its seeds and nudges pitch (×1, ×0.95, ×1.055) and decay. The list is `VARIANTS` in `generate.py`; the count must match `audio.sounds[id].variants` in `config/ux.json` (`check.py` fails if a configured variant file is missing). `Sfx.play(id)` picks one at random and never the same one twice in a row.
+
+## Layout of generate.py
+
+- **DSP helpers**: envelopes (`env_perc`, `env_swell`, `fade`), `noise`, modal/additive `partials`, `glide`, a zero-delay state-variable filter `svf` (lp/bp/hp, with sweeps), `soft_clip`, a small Freeverb-style `reverb`, and `finish()` (DC/rumble high-pass, silent-tail trim, click-free fades, loudness match, peak cap at -1 dBFS).
+- **Instruments**: `knock` (wood), `felt_thud`, `bell` (soft brass chime), `metal` (shield), `rhodes` (FM electric piano), `upright` (bass), `chord`, `paper` (cards), `whoosh`, `crackles`, `breath`, `arpeggio`, `snap` (the 1-3 kHz presence layer).
+- **One function per sound**, grouped UI / cards / pieces / score-energy-turns / stingers / map, then the two music loops.
+- **Laptop presence**: `capture` (1.9 kHz `snap`), `explosion` (a 1.8 kHz band-passed crack and a 1.4 kHz snap added after the saturation, debris knocks at 0.9-1.5 kHz), `check` (a quiet D6 brass ping, 1175 Hz, decaying in ~0.15 s) and `piece_land_heavy` (a 1.5 kHz snap) carry a short attack layer, so they read on speakers that roll off below ~250 Hz. Iteration 3 added the same to the cues that carry a message: `ui_error` (a muted, low-passed 1.1 kHz wood "tock" on top of each of its two knocks), `ui_cancel` (a quiet brass blip a twelfth up, D6-A5, the same falling fourth, ~60 ms decay) and `turn_player` (short G5/D6 octave pings on its two notes, gone in ~0.1 s). The body underneath is unchanged and the centroids stay low (190-520 Hz). Iteration 4: `piece_land_medium_2` gets a 1.24 kHz `snap` (see below), `capture_against` a muted, low-passed 1.45 kHz snap and `check_stay` a muted D6 (1175 Hz) wood tick.
+
+## Tuning
+
+- **Relative volume, pitch variation, cooldown**: edit `config/ux.json` → `audio` (no regeneration needed). Every one-shot is rendered at the same short-term loudness (`SFX_LOUDNESS_DB`, loudest 50 ms ≈ -16 dBFS) so the dB values there are the real mix.
+- **Timbre**: change the sound's function; keep partials under `MAX_PARTIAL_HZ` (5 kHz) and attacks ≥ 4 ms for anything that isn't an impact.
+- **Music**: each loop is a list of bars `(bass root, voicing, comping pattern, bass style[, drum style])` plus bell phrases, arranged in sections. `music_menu` (60 BPM, 32 bars, 128 s): A theme (8) → A' high voicings, leaner comping, answering phrase, bass pick-ups (8) → B bridge with a borrowed F minor 6/9, A7♭9 and B♭maj9♯11 (8) → breakdown, keys and bells only (4) → turnaround (4). `music_match` (72 BPM, 36 bars, 120 s): A the A-minor vamp (12) → A' high voicings, comping rotated between three patterns, bass fills every 4 bars, ghost brushes, a brush fill into B (12) → B lighter two-feel bridge (8) → breakdown, pads, no kick (4). The breakdowns sit 2-4 dB under the rest (RMS per 4 bars), so the loop breathes. `render_loop()` renders 4 s past the loop end and folds that tail onto the start, so ring-outs and reverb cross the seam; keep the length a whole number of bars. Music is **mono** now: two ~2-minute loops in stereo would be ~22 MB, and the quiet, centred lounge mix lost little (the old slow autopan is gone). The Sfx autoload sets forward looping over the whole file at load time.
+- **Limits** checked by `check.py`: peak ≤ -1 dBFS, DC < 0.002, one-shots start/end at silence, one-shots ≤ 1.5 s (stingers ≤ 4 s), every one-shot's short-term loudness within ±0.6 dB of -16 dBFS, spectral centroid ≤ 3 kHz (nothing shrill), music seam jump below the track's own 99th-percentile sample step, total size ≤ 20 MB, every configured id and variant has a file.
+  - **Changed in iteration 2, with reasons**: music length limit 40.5 s → **150.5 s**, because the loops are now deliberately long (the critic counted ~45 repeats of the 40 s loop in 30 minutes; 120-128 s gives ~15). New **presence** check: for `capture`, `explosion`, `check` and `piece_land_heavy`, at least **-14.5 dB** of the attack's energy (first 100 ms) must sit in 1-4 kHz (iteration 1 measured -19.6, -13.9, -25.9 and -21.8 dB; now about -11, -11, -13 and -13). It is measured on the attack, not the whole sound, because a long low tail would hide the transient in a whole-file average.
+  - **Changed in iteration 3**: the presence rule (`LAPTOP` in `check.py`) now also covers **`ui_error`** (-33.7 → -12.8 dB, centroid 203 → 260 Hz), **`ui_cancel`** (-26.5 → -13.4 dB, 346 → 372 Hz) and **`turn_player`** (-21.3 → -13.4 dB, 475 → 516 Hz): a refusal, a cancel and "your turn" are messages, and on laptop speakers half of the refusal feedback was close to inaudible. `check` already passed (-12.9 dB, its D6 ping) and stays in the rule, as do `capture` (-11.2), `explosion` (-11.0) and `piece_land_heavy` (-13.1). Left out on purpose:
+    - `turn_opponent` (-54.7 dB): it plays every round, at -14 dB, as a deliberately background tap. The turn banner says the same thing, and the opponent's move is heard a moment later through `piece_pickup` / `piece_land_*` (-9 to -13 dB presence). A 1 kHz layer loud enough to pass (it needs a tick at the level of a UI click) would turn it back into the nagging chime critique 1 flagged.
+    - the stingers (`victory`, `defeat`, `run_*`, `unlock_fanfare`, -14 to -29 dB): they are 2.6-3.8 s musical phrases, always with a full-screen result, so a 100 ms attack measure says little about them. Their melody (bells and upper chord tones, 330-880 Hz) sits above the laptop roll-off. A bright attack on `defeat` would also fight its mood.
+    - other dark sounds (`fire_ignite` -16.1, `screen_transition` -18.6, `energy_refill` -18.8): each comes with a visual that carries the information, and nothing is lost if a laptop softens it.
+  - **Changed in iteration 4**: two new ids are held to the presence rule, both rendered at the shared -16 dBFS loudness.
+    - `capture_against` (the opponent's capture; 3 variants, centroid ~290 Hz against capture's ~440): -11.0 to -11.7 dB.
+    - `check_stay` (a side stays in check, 0.48 s held minor second): -12.3 dB.
+    - `piece_land_medium_2` was not in the rule, but it measured -19.2 dB against -11.7 / -10.8 for its siblings. At its 380 Hz pitch the knock's second mode (x2.57) falls to 977 Hz, just under the band. That variant alone now gets a 1.24 kHz snap, like `piece_land_heavy`, and measures -11.4 dB with the same pitch, decay and body.

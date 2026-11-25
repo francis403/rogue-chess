@@ -10,10 +10,12 @@ const WALNUT_RAISED := Color("271e17")
 const WALNUT_HIGH := Color("31261d")
 const WALNUT_INSET := Color("120e0b")
 
-# Ink: four text levels.
+# Ink: four text levels. Contrast on WALNUT_HIGH (the lightest surface text sits on):
+# IVORY 11.9:1, SOFT 7.4:1, FAINT 4.7:1 (lowest level allowed for information),
+# MUTED 2.1:1 (disabled and decorative only, never information).
 const IVORY := Color("efe6d4")
 const IVORY_SOFT := Color("c2b6a0")
-const IVORY_FAINT := Color("8d8172")
+const IVORY_FAINT := Color("9d907f")
 const IVORY_MUTED := Color("5f564b")
 
 # Rules (borders): ivory at low alpha.
@@ -26,6 +28,9 @@ const BRASS := Color("d6a84e")
 const BRASS_DIM := Color(0.84, 0.66, 0.31, 0.35)
 const BRASS_INK := Color("2a1f12")
 const OXBLOOD := Color("c0503f")
+## Oxblood for small text: OXBLOOD itself is 3.5:1 on walnut (fine for rings,
+## fills and large headings only); this one is 4.7:1 or better on every surface.
+const OXBLOOD_INK := Color("e0705c")
 const FELT := Color("7fae67")
 const EMBER := Color("e8823a")
 const STEEL := Color("86b2d6")
@@ -42,6 +47,8 @@ const PIECE_EBONY := Color("231a14")
 const PIECE_EBONY_INK := Color("eadcc0")
 
 const SCRIM := Color(0.05, 0.035, 0.025, 0.78)
+## Keyboard focus ring: solid brass, drawn outside the control.
+const FOCUS := BRASS
 
 
 static func side_color(side: int) -> Color:
