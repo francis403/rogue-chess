@@ -444,7 +444,7 @@ func _start_turn() -> Array[Dictionary]:
 
 
 ## Draws `side` up to the hand size. When the opponent draws, its new hand
-## gets its hidden cards: the last ones drawn, `hidden_cards` minus Crystal Ball.
+## gets its hidden cards: the last ones drawn, `hidden_cards` minus foresight.
 ## The opponent's draw events don't say which card was drawn.
 func _draw(side: int) -> Array[Dictionary]:
 	var events := _sides[side].draw_up_to(int(_config("hand_size")), _rng)
@@ -620,7 +620,7 @@ func _card_can_move(card: CardData, piece: MatchPiece) -> bool:
 ## cause: "capture", "explosion" or "burn_out" (the latter emits a burn_out event).
 func _credit_capture(victim: MatchPiece, credited_side: int, extra_points: int, cause: String, events: Array[Dictionary]) -> void:
 	var points := victim.value() + extra_points + _sides[credited_side].artifact_amount("capture_bonus")
-	# Crystal Ball's cost: a captured player piece is worth more to the opponent.
+	# foresight's cost: a captured player piece is worth more to the opponent.
 	if victim.side == PLAYER:
 		points += _sides[PLAYER].artifact_amount("foresight", "penalty")
 	_sides[credited_side].score += points

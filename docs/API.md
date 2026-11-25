@@ -98,7 +98,7 @@ Every event has `"type"`; most have `"side"` (the side it concerns). `uid` is th
 | `reveal` | side, count (cards revealed), hidden (still hidden) | after the Scout's `card_played` |
 | `move` | side, uid, piece_type, from, to, is_capture | the piece moved (not emitted when a shield blocks) |
 | `shield_block` | side (defender), uid, square, cause ("capture"\|"explosion"), attacker_uid (-1 for explosions), attacker_square | a shield absorbed a capture; the attacker stays on `attacker_square` |
-| `capture` | side (victim owner), uid, piece_type, square, by_side, points, cause ("capture"\|"explosion") | a piece was removed by a capture or an explosion. `points` include Trophy Case and, for a player piece, Crystal Ball's penalty (D68) |
+| `capture` | side (victim owner), uid, piece_type, square, by_side, points, cause ("capture"\|"explosion") | a piece was removed by a capture or an explosion. `points` include Trophy Case and, for a player piece, foresight's penalty (D68) |
 | `explosion` | side (exploder), square (centre), squares (in-board neighbours) | Powder Keg goes off, before its `capture`/`shield_block` events |
 | `score` | side, points, total | points credited (only when points > 0) |
 | `ignite` | side, uid, square, turns_left | a Fire piece moved for the first time |

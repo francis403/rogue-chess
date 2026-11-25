@@ -484,7 +484,7 @@ func _trophy_bonus(game: ChessMatch, credited: int) -> int:
 	return int(GameConfig.data("artifacts")["artifacts"]["capture_bonus"]["amount"])
 
 
-## Crystal Ball's cost, mirroring ChessMatch: a captured player piece gives its
+## foresight's cost, mirroring ChessMatch: a captured player piece gives its
 ## captor extra points while the player owns it.
 func _penalty(game: ChessMatch, victim: MatchPiece) -> int:
 	if victim.side != ChessMatch.PLAYER or not game.artifacts(ChessMatch.PLAYER).has("foresight"):

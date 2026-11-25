@@ -274,11 +274,11 @@ func test_hidden_cards_reach_the_match_and_default_when_missing() -> void:
 	assert_eq(session._opponent_setup("easy")["hidden_cards"], int(GameConfig.value("match", "opponent_hidden_cards")))
 
 
-func test_opponent_artifacts_never_include_crystal_ball() -> void:
+func test_opponent_artifacts_never_include_foresight() -> void:
 	var artifacts_cfg: Dictionary = GameConfig.data("artifacts")
 	var pool: Array = artifacts_cfg["opponent_pool"]
 	var expected: Array = artifacts_cfg["artifacts"].keys().filter(func(id: String) -> bool: return id != "foresight")
-	assert_eq(_sorted(pool), _sorted(expected), "every artifact except Crystal Ball")
+	assert_eq(_sorted(pool), _sorted(expected), "every artifact except foresight")
 	var count := int(GameConfig.data("opponents")["boss"]["artifact_count"])
 	var seen := {}
 	for _i in 50:

@@ -93,7 +93,7 @@ func test_choosing_no_artifacts_is_allowed() -> void:
 	assert_eq(session.artifacts, [] as Array[String])
 
 
-func test_crystal_ball_can_be_chosen_once_unlocked() -> void:
+func test_foresight_can_be_chosen_once_unlocked() -> void:
 	var meta := MetaStore.new(dir + "meta.json")
 	var rng := RandomNumberGenerator.new()
 	for _artifact_id in GameConfig.value("artifacts", "unlock_pool"):
@@ -109,7 +109,7 @@ func test_crystal_ball_can_be_chosen_once_unlocked() -> void:
 	var setup := session.build_match_setup(session.default_roster())
 	assert_eq(setup["player"]["artifacts"], ["foresight"] as Array[String])
 	var hidden := int(GameConfig.data("opponents")["easy"]["hidden_cards"]) - int(GameConfig.data("artifacts")["artifacts"]["foresight"]["amount"])
-	assert_eq(ChessMatch.new(setup).hidden_card_count(), maxi(hidden, 0), "Crystal Ball reaches the match")
+	assert_eq(ChessMatch.new(setup).hidden_card_count(), maxi(hidden, 0), "foresight reaches the match")
 
 
 func test_map_node_choice() -> void:

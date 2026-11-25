@@ -1,6 +1,6 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene format=3 uid="uid://dp0qo33jst60a"]
 
-[ext_resource type="Script" path="res://tools/screenshots/take_screenshots.gd" id="1"]
+[ext_resource type="Script" uid="uid://du4svkp83xwag" path="res://tools/screenshots/take_screenshots.gd" id="1"]
 
-[node name="TakeScreenshots" type="Node"]
+[node name="TakeScreenshots" type="Node" unique_id=2099988904]
 script = ExtResource("1")

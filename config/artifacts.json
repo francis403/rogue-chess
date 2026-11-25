@@ -7,6 +7,6 @@
 	"capture_bonus": { "name": "Trophy Case",    "desc": "Pieces you capture are worth +1 point.", "amount": 1 },
 	"holes":         { "name": "Sinkholes",      "desc": "2-4 holes appear in the middle rows. Only knights can jump over them.", "min": 2, "max": 4 },
 	"exploding":     { "name": "Powder Keg",     "desc": "Pieces you capture explode, also capturing every adjacent piece (yours too). No chain reactions." },
-	"foresight":     { "name": "Crystal Ball",   "desc": "See 1 more opponent card each hand. The opponent gets +1 point whenever one of your pieces is captured.", "amount": 1, "penalty": 1 }
+	"foresight":     { "name": "Deep Vision",   "desc": "See 1 more opponent card each hand. The opponent gets +1 point whenever one of your pieces is captured.", "amount": 1, "penalty": 1 }
   }
 }

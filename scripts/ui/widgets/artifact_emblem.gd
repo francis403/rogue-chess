@@ -2,7 +2,7 @@ class_name ArtifactEmblem
 extends Control
 ## An artifact's medallion, drawn in code like the piece tokens: a brass coin with
 ## a dark rim and a simple ink drawing (Espresso a cup, Trophy Case a trophy,
-## Sinkholes a board with holes, Powder Keg a bomb, Crystal Ball a glass ball on
+## Sinkholes a board with holes, Powder Keg a bomb, foresight a glass ball on
 ## its stand). Unknown ids get a "?".
 ## `is_dim` draws it unlit (not chosen): a dark coin with brass ink.
 
@@ -44,7 +44,7 @@ func _draw() -> void:
 		"exploding":
 			_bomb(centre, unit, ink)
 		"foresight":
-			_crystal_ball(centre, unit, ink, face)
+			_foresight(centre, unit, ink, face)
 		_:
 			var font := UiFonts.serif_bold()
 			var font_size := int(radius)
@@ -107,7 +107,7 @@ func _bomb(c: Vector2, u: float, ink: Color) -> void:
 
 
 ## A glass ball on a low stand, a shine on the glass and a sparkle beside it.
-func _crystal_ball(c: Vector2, u: float, ink: Color, face: Color) -> void:
+func _foresight(c: Vector2, u: float, ink: Color, face: Color) -> void:
 	var ball := c + Vector2(-u * 0.05, -u * 0.22)
 	var ball_radius := u * 0.78
 	_quad(Vector2(c.x - u * 0.45, c.y + u * 0.5), Vector2(c.x + u * 0.35, c.y + u * 0.5),

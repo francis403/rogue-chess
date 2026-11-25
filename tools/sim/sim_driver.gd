@@ -159,7 +159,7 @@ func _pick_piece_set(session: RunSession) -> String:
 
 
 func _pick_artifacts(session: RunSession) -> Array:
-	# The bot can't use hidden-card info, so Crystal Ball would be pure downside (D30).
+	# The bot can't use hidden-card info, any artifact like that would be pure downside (D30).
 	var ids: Array = session.available_artifacts().map(func(entry: Dictionary) -> String: return entry["id"])
 	ids.erase("foresight")
 	if _rng.randf() >= ARTIFACT_CHANCE:

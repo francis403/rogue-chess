@@ -1,5 +1,5 @@
 extends GutTest
-## Opponent card visibility: hidden cards, Scout, Crystal Ball (D63-D70,
+## Opponent card visibility: hidden cards, Scout, foresight (D63-D70,
 ## docs/specs/opponent-card-visibility.md R1-R6).
 
 const H := preload("res://tests/unit/match/match_helper.gd")
@@ -263,7 +263,7 @@ func test_scout_is_never_a_legal_play_and_allows_redraw() -> void:
 			assert_eq(game.pieces_for_card(card_index), [] as Array[Vector2i])
 
 
-func test_crystal_ball_shows_one_more_card_per_hand() -> void:
+func test_foresight_shows_one_more_card_per_hand() -> void:
 	var amount := int(_foresight_config()["amount"])
 	assert_eq(amount, 1)
 	for hidden in [1, 3]:
@@ -274,12 +274,12 @@ func test_crystal_ball_shows_one_more_card_per_hand() -> void:
 		_assert_hidden(game, events, hidden - amount, "next hand, hidden_cards %d" % hidden)
 
 
-func test_crystal_ball_counts_only_for_the_player() -> void:
+func test_foresight_counts_only_for_the_player() -> void:
 	var game := _game(1, SCOUT_AND_MOVES, {"opponent_artifacts": ["foresight"]})
 	assert_eq(game.hidden_card_count(), 1)
 
 
-func test_crystal_ball_scout_stacking() -> void:
+func test_foresight_scout_stacking() -> void:
 	var game := _game(4, ["scout", "scout", "scout", "move", "move"], {"player_artifacts": ["foresight"]})
 	assert_eq(game.hidden_card_count(), 3)
 	game.reveal(H.card_index(game, "scout"))
@@ -296,7 +296,7 @@ func _penalty_cases() -> Array:
 	return [[{}, 0], [{"player_artifacts": ["foresight"]}, penalty], [{"opponent_artifacts": ["foresight"]}, 0]]
 
 
-func test_crystal_ball_penalty_on_a_capture() -> void:
+func test_foresight_penalty_on_a_capture() -> void:
 	for case in _penalty_cases():
 		var game := H.make([H.piece("king", Vector2i(5, 0)), H.piece("rook", Vector2i(0, 0)), H.piece("pawn", Vector2i(3, 1))],
 			[H.piece("king", OPPONENT_KING), H.piece("pawn", Vector2i(0, 4)), H.piece("bishop", Vector2i(1, 3))], H.FIVE_MOVES, H.FIVE_MOVES, case[0])
@@ -308,7 +308,7 @@ func test_crystal_ball_penalty_on_a_capture() -> void:
 		assert_eq(game.score(O), 1 + case[1], str(case[0]))
 
 
-func test_crystal_ball_penalty_on_a_king_capture() -> void:
+func test_foresight_penalty_on_a_king_capture() -> void:
 	for case in _penalty_cases():
 		var game := H.make([H.piece("king", Vector2i(5, 0))], [H.piece("king", OPPONENT_KING), H.piece("bishop", Vector2i(3, 2))],
 			H.FIVE_MOVES, H.FIVE_MOVES, case[0])
@@ -318,7 +318,7 @@ func test_crystal_ball_penalty_on_a_king_capture() -> void:
 		assert_eq(game.score(O), case[1], "a 0-value king: %s" % case[0])
 
 
-func test_crystal_ball_penalty_on_a_check_escape_capture() -> void:
+func test_foresight_penalty_on_a_check_escape_capture() -> void:
 	for case in _penalty_cases():
 		var game := H.make([H.piece("king", PLAYER_KING), H.piece("rook", Vector2i(4, 0))], [H.piece("king", OPPONENT_KING)],
 			H.FIVE_MOVES, H.FIVE_MOVES, case[0])
@@ -328,7 +328,7 @@ func test_crystal_ball_penalty_on_a_check_escape_capture() -> void:
 		assert_eq(game.score(O), 5 + case[1], str(case[0]))
 
 
-func test_crystal_ball_penalty_on_an_explosion() -> void:
+func test_foresight_penalty_on_an_explosion() -> void:
 	for case in _penalty_cases():
 		var options: Dictionary = case[0].duplicate()
 		options["player_artifacts"] = options.get("player_artifacts", []) + ["exploding"]
@@ -340,7 +340,7 @@ func test_crystal_ball_penalty_on_an_explosion() -> void:
 		assert_eq(game.score(O), 3 + case[1], str(options))
 
 
-func test_crystal_ball_penalty_on_a_burn_out() -> void:
+func test_foresight_penalty_on_a_burn_out() -> void:
 	var burn_turns := int(GameConfig.data("piece_sets")["sets"]["fire"]["burn_turns"])
 	for case in _penalty_cases():
 		var game := H.make([H.piece("king", Vector2i(5, 0), "fire"), H.piece("pawn", Vector2i(0, 1), "fire")],

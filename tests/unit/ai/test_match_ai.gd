@@ -246,9 +246,9 @@ func test_reply_loss_counts_a_promoting_capture() -> void:
 	assert_almost_eq(promoting - plain, queen_gain, 0.001)
 
 
-## Crystal Ball (D68): a player pawn is worth 1 + penalty to the opponent. At
+## foresight (D68): a player pawn is worth 1 + penalty to the opponent. At
 ## target - 2 that capture wins, so both shortcut scorers must count the penalty.
-func test_crystal_ball_penalty_counts_in_shortcut_scoring() -> void:
+func test_foresight_penalty_counts_in_shortcut_scoring() -> void:
 	var win_score := float(GameConfig.value("ai", "win_score"))
 	var take_pawn := [Vector2i(0, 2), Vector2i(0, 1)]
 	for has_ball in [false, true]:
