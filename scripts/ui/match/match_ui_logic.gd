@@ -22,6 +22,21 @@ static func movable_pieces(game: ChessMatch) -> Array[Vector2i]:
 	return squares
 
 
+## Index of the first Scout in the side-to-move's hand that can be played now,
+## or -1. A Scout moves no piece, so legal_plays() never lists it.
+static func playable_reveal(game: ChessMatch) -> int:
+	var hand := game.hand(game.current_side())
+	for i in hand.size():
+		if hand[i].is_reveal() and game.is_card_playable(i):
+			return i
+	return -1
+
+
+## Whether any card in hand can be played now: a move, or a Scout.
+static func has_play(game: ChessMatch) -> bool:
+	return not game.legal_plays(game.current_side()).is_empty() or playable_reveal(game) != -1
+
+
 ## The play for a piece-first move: the cheapest card that allows from -> to,
 ## preferring the piece's own card over Move on a tie. {} if none.
 static func pick_play(game: ChessMatch, from: Vector2i, to: Vector2i) -> Dictionary:
@@ -37,9 +52,12 @@ static func pick_play(game: ChessMatch, from: Vector2i, to: Vector2i) -> Diction
 
 ## Whether energy left after a redraw still pays for the cheapest card in the deck
 ## (a redraw that can't lead to a play only burns energy). deck: Array of CardData.
-static func redraw_leaves_a_play(energy: int, redraw_cost: int, deck: Array) -> bool:
+## A Scout only counts while an opponent card is hidden.
+static func redraw_leaves_a_play(energy: int, redraw_cost: int, deck: Array, has_hidden: bool) -> bool:
 	var cheapest := -1
 	for card: CardData in deck:
+		if card.is_reveal() and not has_hidden:
+			continue
 		if cheapest == -1 or card.cost() < cheapest:
 			cheapest = card.cost()
 	return cheapest != -1 and energy - redraw_cost >= cheapest
@@ -74,6 +92,8 @@ static func unplayable_reason(game: ChessMatch, card_index: int) -> String:
 	var card: CardData = game.hand(game.current_side())[card_index]
 	if card.cost() > game.energy(game.current_side()):
 		return "Not enough energy for %s (costs %d)" % [card.display_name(), card.cost()]
+	if card.is_reveal():
+		return "No hidden cards to reveal"
 	if card.type == "move":
 		return "No piece can move"
 	return "No %s can move right now" % card.type

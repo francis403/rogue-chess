@@ -254,7 +254,7 @@ func _has_winning_follow_up(game: ChessMatch, board: MatchBoard) -> bool:
 	most_points += _trophy_bonus(game, side)
 	var points_needed := game.target_score() - game.score(side)
 	for victim in game.pieces(1 - side):
-		if victim.shield_active or (victim.type != "king" and victim.value() + most_points < points_needed):
+		if victim.shield_active or (victim.type != "king" and victim.value() + most_points + _penalty(game, victim) < points_needed):
 			continue
 		var cache := {}
 		for piece in game.pieces(side):
@@ -262,7 +262,7 @@ func _has_winning_follow_up(game: ChessMatch, board: MatchBoard) -> bool:
 				continue
 			if not _attack_squares(cache, board, piece, piece.type, victim.square).has(piece.square):
 				continue
-			var points := victim.value() + piece.capture_bonus() + _trophy_bonus(game, side)
+			var points := victim.value() + piece.capture_bonus() + _trophy_bonus(game, side) + _penalty(game, victim)
 			if (victim.type == "king" or points >= points_needed) and _wins_after(game, piece, victim.square):
 				return true
 	return false
@@ -336,7 +336,7 @@ func _reply_loss(game: ChessMatch, attacker: MatchPiece, victim: MatchPiece) -> 
 	if victim.shield_active:
 		return _shield_bonus if victim.side == side else -_shield_bonus
 	var enemy := 1 - side
-	var victim_points := victim.value() + attacker.capture_bonus() + _trophy_bonus(game, enemy)
+	var victim_points := victim.value() + attacker.capture_bonus() + _trophy_bonus(game, enemy) + _penalty(game, victim)
 	var points: Array[int] = [0, 0]
 	points[enemy] = victim_points
 	var kings_lost: Array[bool] = [false, false]
@@ -353,7 +353,7 @@ func _reply_loss(game: ChessMatch, attacker: MatchPiece, victim: MatchPiece) -> 
 				loss += _shield_bonus if caught.side == side else -_shield_bonus
 				continue
 			var credited := 1 - caught.side
-			var caught_points := caught.value() + _trophy_bonus(game, credited)
+			var caught_points := caught.value() + _trophy_bonus(game, credited) + _penalty(game, caught)
 			points[credited] += caught_points
 			loss += _capture_loss(caught, caught_points)
 			kings_lost[caught.side] = kings_lost[caught.side] or caught.type == "king"
@@ -482,3 +482,11 @@ func _trophy_bonus(game: ChessMatch, credited: int) -> int:
 	if not game.artifacts(credited).has("capture_bonus"):
 		return 0
 	return int(GameConfig.data("artifacts")["artifacts"]["capture_bonus"]["amount"])
+
+
+## Crystal Ball's cost, mirroring ChessMatch: a captured player piece gives its
+## captor extra points while the player owns it.
+func _penalty(game: ChessMatch, victim: MatchPiece) -> int:
+	if victim.side != ChessMatch.PLAYER or not game.artifacts(ChessMatch.PLAYER).has("foresight"):
+		return 0
+	return int(GameConfig.data("artifacts")["artifacts"]["foresight"]["penalty"])

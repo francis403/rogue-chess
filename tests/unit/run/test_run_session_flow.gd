@@ -93,6 +93,25 @@ func test_choosing_no_artifacts_is_allowed() -> void:
 	assert_eq(session.artifacts, [] as Array[String])
 
 
+func test_crystal_ball_can_be_chosen_once_unlocked() -> void:
+	var meta := MetaStore.new(dir + "meta.json")
+	var rng := RandomNumberGenerator.new()
+	for _artifact_id in GameConfig.value("artifacts", "unlock_pool"):
+		meta.unlock_random_artifact(rng)
+	assert_true(meta.is_artifact_unlocked("foresight"))
+	var session := Helper.new_session(dir)
+	session.choose_piece_set("standard")
+	var offered := session.available_artifacts().filter(func(a: Dictionary) -> bool: return a["id"] == "foresight")
+	assert_eq(offered.size(), 1)
+	assert_eq(offered[0]["name"], GameConfig.data("artifacts")["artifacts"]["foresight"]["name"])
+	assert_true(session.choose_artifacts(["foresight"])["ok"])
+	session.choose_node("L1")
+	var setup := session.build_match_setup(session.default_roster())
+	assert_eq(setup["player"]["artifacts"], ["foresight"] as Array[String])
+	var hidden := int(GameConfig.data("opponents")["easy"]["hidden_cards"]) - int(GameConfig.data("artifacts")["artifacts"]["foresight"]["amount"])
+	assert_eq(ChessMatch.new(setup).hidden_card_count(), maxi(hidden, 0), "Crystal Ball reaches the match")
+
+
 func test_map_node_choice() -> void:
 	var session := Helper.started_session(dir)
 	assert_eq(session.available_nodes(), ["L1", "M1", "R1"] as Array[String])

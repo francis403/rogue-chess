@@ -1,6 +1,6 @@
 ## ChessMatch
 
-Rules engine: `scripts/core/match/` — `ChessMatch` (the match), `MatchPiece` (a piece on the board), `MatchBoard` (grid + holes), `MoveGenerator` (raw piece movement), `MatchSide` (one side's cards/energy/score). Pure logic (`RefCounted`, no nodes), deterministic for a given `setup["seed"]` (one `RandomNumberGenerator` drives deck shuffles and hole placement). Rules: SPEC "Match rules" + DECISIONS D1–D30.
+Rules engine: `scripts/core/match/` — `ChessMatch` (the match), `MatchPiece` (a piece on the board), `MatchBoard` (grid + holes), `MoveGenerator` (raw piece movement), `MatchSide` (one side's cards/energy/score). Pure logic (`RefCounted`, no nodes), deterministic for a given `setup["seed"]` (one `RandomNumberGenerator` drives deck shuffles and hole placement). Rules: SPEC "Match rules" + DECISIONS D1–D30, D56–D62 (check escape), D63–D70 (opponent card visibility).
 
 ### Setup
 
@@ -8,14 +8,15 @@ Rules engine: `scripts/core/match/` — `ChessMatch` (the match), `MatchPiece` (
 var game := ChessMatch.new({
   "seed": int,
   "player":   {"roster": [{"piece": PieceData, "square": Vector2i}], "deck": Array[CardData], "artifacts": Array[String]},
-  "opponent": {"id": String, "roster": [...same...], "deck": Array[CardData], "artifacts": Array[String]},
+  "opponent": {"id": String, "roster": [...same...], "deck": Array[CardData], "artifacts": Array[String],
+               "hidden_cards": int},  # optional: missing → match.json opponent_hidden_cards (1); negative → 0
   # optional, tests/debug only: fixed holes instead of the random Sinkholes placement
   "holes": Array[Vector2i],
 })
 ```
 - Constants `ChessMatch.PLAYER = 0`, `ChessMatch.OPPONENT = 1`. Squares are `Vector2i(file, rank)` (D1); player pawns move +y.
 - Every `PieceData` and `CardData` is **copied**; the match never mutates what you pass in (a used shield is reported in `result()` instead, D20). Extra keys in `opponent` (name, search_depth, ...) are ignored.
-- The constructor shuffles both decks (Book cards on top, D10), places holes (D28), and **starts the first turn** (`match.json: player_moves_first`, D2). Its events are in `initial_events()`. A side with no legal piece move at the start of its turn loses immediately (D14) — this can happen in the constructor.
+- The constructor shuffles both decks (Book cards on top, D10), places holes (D28), draws the opponent's first hand (it holds its next hand during the player's turn, D63), and **starts the first turn** (`match.json: player_moves_first`, D2). Its events are in `initial_events()`. A side with no legal piece move at the start of its turn loses immediately (D14) — this can happen in the constructor.
 - An invalid roster square (off-board or taken) fails an `assert` (D54); release builds skip that entry.
 
 ### Queries (never change state)
@@ -29,7 +30,9 @@ var game := ChessMatch.new({
 | `opponent_id()` | String from setup |
 | `artifacts(side)` | `Array[String]` |
 | `energy(side)`, `max_energy(side)` | int (3, or 4 with `extra_energy`) |
-| `hand(side)` | `Array[CardData]` (a new array; the cards themselves are read-only) |
+| `hand(side)` | `Array[CardData]` (a new array; the cards themselves are read-only). The opponent's includes its hidden cards: AI and tests only, never display it |
+| `visible_opponent_hand()` | `Array[CardData]` the opponent's cards the player may see, in hand order (D64) |
+| `hidden_card_count()` | int — how many of the opponent's cards in hand are hidden |
 | `draw_pile_size(side)`, `discard_size(side)`, `deck_size(side)` | int (`deck_size` = hand + draw + discard) |
 | `score(side)`, `target_score()` | int |
 | `board_size()` | int (6) |
@@ -40,10 +43,11 @@ var game := ChessMatch.new({
 | `piece_moves(from)` | `Array[Vector2i]` raw movement of the piece on `from` (either side), ignoring cards/turn — AI lookahead and the D14 rule |
 | `has_any_piece_move(side)` | bool |
 | `legal_plays(side)` | `Array[Dictionary]` of `{"card_index", "from", "to"}` — **every** legal, affordable card play right now; empty if it isn't `side`'s turn or the match is over. Single source of truth for UI highlights, AI and bots. Two identical cards produce duplicate entries with different `card_index`. |
-| `is_card_playable(card_index)` | bool — current side; affordable and moves at least one piece (D7) |
+| `is_card_playable(card_index)` | bool — current side; affordable and moves at least one piece (D7). For a Scout: `can_reveal(card_index)` |
+| `can_reveal(card_index)` | bool — `reveal(card_index)` would succeed: player's turn, no escape pending, the card is a Scout, affordable, and an opponent card is hidden (D66) |
 | `pieces_for_card(card_index)` | `Array[Vector2i]` squares of current-side pieces the card can move now (empty if unaffordable) |
 | `targets(card_index, from)` | `Array[Vector2i]` destinations for that card on that piece (empty if not allowed/affordable) |
-| `can_redraw()` | bool — not over, no escape pending, energy ≥ `redraw_cost`, and `legal_plays` is empty (D8) |
+| `can_redraw()` | bool — not over, no escape pending, energy ≥ `redraw_cost`, and `legal_plays` is empty (D8; a Scout never counts, D66) |
 | `pending_escape_side()` | 0/1 — the side that must answer a check now (escape or decline), **-1** if none (D57) |
 | `escape_squares()` | `Array[Vector2i]` safe king destinations for the pending escape (`[]` if none pending) |
 | `escape_penalty(side)` | int — energy that will come off `side`'s next turn for escapes made so far (D59) |
@@ -51,20 +55,21 @@ var game := ChessMatch.new({
 
 `MatchPiece` fields: `uid` (match-local, unique, stable for the match), `side`, `type` (current type — a promoted pawn is `"queen"`), `square`, `data` (`PieceData` copy: `data.uid` is the collection uid, `data.upgrade`, `data.piece_set`), `shield_active`, `burn_turns_left` (0 = not burning), `is_promoted`, `has_moved`; `is_burning()`, `value()` (current capture points), `burn_turns()`, `capture_bonus()`.
 
-Card rules: a card moves one piece of its type; `"move"` moves any piece and is the only way to move a king. `CardData.cost()` (Cheaper included, min 0).
+Card rules: a card moves one piece of its type; `"move"` moves any piece and is the only way to move a king. `"scout"` moves nothing: it is played with `reveal()` and never appears in `legal_plays` (D66). `CardData.cost()` (Cheaper included, min 0); `CardData.is_reveal()` / `reveal_amount()` (`cards.json: reveal`).
 
 ### Actions (current side only)
 
-Each returns `Array[Dictionary]` of events. An illegal call changes nothing and returns exactly `[{"type": "error", "reason": String}]`; reasons: `match_over`, `escape_pending`, `no_escape_pending`, `bad_card_index`, `no_own_piece`, `wrong_card`, `not_enough_energy`, `illegal_move`, `redraw_not_allowed`. Nothing ever crashes on bad input.
+Each returns `Array[Dictionary]` of events. An illegal call changes nothing and returns exactly `[{"type": "error", "reason": String}]`; reasons: `match_over`, `escape_pending`, `no_escape_pending`, `bad_card_index`, `no_own_piece`, `wrong_card`, `not_enough_energy`, `illegal_move`, `redraw_not_allowed`, `player_only`, `nothing_hidden`. Nothing ever crashes on bad input.
 
 **Driver loop (UI, AI, sim):** always check `pending_escape_side()` first. If it is not -1, that side must call `escape(to)` or `decline_escape()`; every other action from either side returns `escape_pending`, and `legal_plays()` is `[]` for both sides. `current_side()` stays the side that gave check, which then continues its turn.
 
-- `play(card_index, from, to)` — spends the card's cost, discards the card, resolves the move (D13 order): shield block **or** capture → points → explosion → ignite → promotion → win check.
+- `play(card_index, from, to)` — spends the card's cost, discards the card, resolves the move (D13 order): shield block **or** capture → points → explosion → ignite → promotion → win check. A Scout is refused with `wrong_card`.
+- `reveal(card_index)` — plays a Scout (player only): spends its cost, discards it, and reveals the next `min(reveal, hidden)` hidden opponent cards in hand order. Events: `card_played`, `reveal`. Errors (in this order): `match_over`, `escape_pending`, `player_only`, `bad_card_index`, `wrong_card` (not a Scout), `not_enough_energy`, `nothing_hidden` (D66).
 - `escape(to: Vector2i)` — only while an escape is pending, `to` ∈ `escape_squares()`. The checked king moves there out of turn, with no card. The move resolves like any move: capture, points (+ Trophy Case), the escaping side's Powder Keg, win check. Adds `check_escape_cost` to `escape_penalty(side)`. No check is looked for afterwards (D56).
 - `decline_escape()` — only while an escape is pending; the king stays in check (D58).
-- `redraw()` — only when `can_redraw()`. Costs `redraw_cost`, discards the **whole** hand (Hold cards included, D8), draws a fresh hand. Repeatable while affordable.
-- `end_turn()` — also the player's "skip". Burn ticks for this side's burning pieces (D24), discard non-Hold cards (D5), turn limit check (after the second side's turn of round `max_rounds`), then the other side's turn starts: energy refill, draw to 5 (reshuffle when needed, D6), no-move check (D14).
-- `clone() -> ChessMatch` — deep copy (board, pieces, decks, RNG state, pending escape and penalties) for AI search; the copy plays out exactly like the original. Cards and `PieceData` are shared (immutable here). Cost ≈ 0.15 ms per clone and ≈ 0.25 ms of move generation per side (debug build) — for depth 2, clone once per own play and evaluate replies with `piece_moves()` / `piece_at()` on that clone rather than cloning per reply.
+- `redraw()` — only when `can_redraw()`. Costs `redraw_cost`, discards the **whole** hand (Hold cards included, D8), draws a fresh hand (an opponent redraw hides cards again, D64). Repeatable while affordable.
+- `end_turn()` — also the player's "skip". Burn ticks for this side's burning pieces (D24), discard non-Hold cards (D5), turn limit check (after the second side's turn of round `max_rounds`); when the opponent's turn ends and the match goes on, the opponent draws its next hand right away with new hidden cards (D63, D64); then the other side's turn starts: energy refill, draw to 5 (reshuffle when needed, D6; the opponent's hand is already full), no-move check (D14).
+- `clone() -> ChessMatch` — deep copy (board, pieces, decks, RNG state, pending escape and penalties, hidden opponent cards) for AI search; the copy plays out exactly like the original. Cards and `PieceData` are shared (immutable here). Cost ≈ 0.15 ms per clone and ≈ 0.25 ms of move generation per side (debug build) — for depth 2, clone once per own play and evaluate replies with `piece_moves()` / `piece_at()` on that clone rather than cloning per reply.
 
 ### Result (`result()` once `is_over()`)
 
@@ -88,11 +93,12 @@ Every event has `"type"`; most have `"side"` (the side it concerns). `uid` is th
 | `turn_start` | side, round, escape_penalty | a side's turn begins |
 | `energy` | side, energy, escape_penalty | energy refilled at turn start: `energy = max(max_energy − escape_penalty, 0)`; the penalty then resets to 0 |
 | `shuffle` | side, count | discard shuffled into the empty draw pile |
-| `draw` | side, card_uid, card_type | one card drawn (the UI hides the opponent's) |
-| `card_played` | side, card_index, card_uid, card_type, cost, energy (left) | first event of every legal `play` |
+| `draw` | side, card_uid, card_type | one card drawn. The opponent's `draw` events have **no** `card_type` (D64) |
+| `card_played` | side, card_index, card_uid, card_type, cost, energy (left) | first event of every legal `play` and `reveal` |
+| `reveal` | side, count (cards revealed), hidden (still hidden) | after the Scout's `card_played` |
 | `move` | side, uid, piece_type, from, to, is_capture | the piece moved (not emitted when a shield blocks) |
 | `shield_block` | side (defender), uid, square, cause ("capture"\|"explosion"), attacker_uid (-1 for explosions), attacker_square | a shield absorbed a capture; the attacker stays on `attacker_square` |
-| `capture` | side (victim owner), uid, piece_type, square, by_side, points, cause ("capture"\|"explosion") | a piece was removed by a capture or an explosion |
+| `capture` | side (victim owner), uid, piece_type, square, by_side, points, cause ("capture"\|"explosion") | a piece was removed by a capture or an explosion. `points` include Trophy Case and, for a player piece, Crystal Ball's penalty (D68) |
 | `explosion` | side (exploder), square (centre), squares (in-board neighbours) | Powder Keg goes off, before its `capture`/`shield_block` events |
 | `score` | side, points, total | points credited (only when points > 0) |
 | `ignite` | side, uid, square, turns_left | a Fire piece moved for the first time |
@@ -202,9 +208,9 @@ A roster is `Array` of `{"piece": PieceData, "square": Vector2i}`.
 {"seed": int,
  "player":   {"roster": [{"piece": PieceData, "square": Vector2i}], "deck": Array[CardData], "artifacts": Array[String]},
  "opponent": {"id": "easy"|"medium"|"boss", "name": String, "difficulty": String, "search_depth": int, "random_chance": float,
-			  "roster": [{"piece": PieceData (standard), "square": Vector2i}], "deck": Array[CardData], "artifacts": Array[String]}}
+			  "hidden_cards": int, "roster": [{"piece": PieceData (standard), "square": Vector2i}], "deck": Array[CardData], "artifacts": Array[String]}}
 ```
-Player pieces and cards are **copies** (same uid) so the match can never change the run. Opponent squares come from `opponents.json` ([x, y], y = 4..5); opponent artifacts are `artifact_count` distinct random ids from the full artifact list (D30).
+Player pieces and cards are **copies** (same uid) so the match can never change the run. Opponent squares come from `opponents.json` ([x, y], y = 4..5); opponent artifacts are `artifact_count` distinct random ids from `artifacts.json: opponent_pool` (D30, D69); `hidden_cards` comes from `opponents.json` (missing → `match.json: opponent_hidden_cards`).
 
 - `finish_match(result) -> result` (MATCH only). `result`:
 ```
@@ -222,7 +228,7 @@ Only `winner` is required. Effects: pieces in `shields_consumed` that still have
 
 ### Shop (SHOP → MAP)
 
-- `shop_offers() -> {"cards": [{"card": CardData, "price": int, "sold": bool}], "pieces": [{"piece": PieceData, "price": int, "sold": bool}], "remove_price": int, "removes_left": int}` — generated once on entering the shop (3 distinct cards priced by rarity, 2 distinct pieces in the run's set priced from `piece_prices`).
+- `shop_offers() -> {"cards": [{"card": CardData, "price": int, "sold": bool}], "pieces": [{"piece": PieceData, "price": int, "sold": bool}], "remove_price": int, "removes_left": int}` — generated once on entering the shop (3 distinct cards from `shop.card_pool` priced by rarity — the only source of Scout cards, D70 — 2 distinct pieces in the run's set priced from `piece_prices`).
 - `buy_card(index)`, `buy_piece(index)` — each offer once; refused with "Not enough points ..." when short. A bought piece does not add a card (D34).
 - `remove_card(card_uid)` — `removes_per_visit` (1) per shop, price `remove_price`, refused when the deck would drop below `min_deck_size` (4) or the card is the last Move card (D53).
 - `leave_shop()`.

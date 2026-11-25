@@ -4,14 +4,17 @@ const Helper := preload("res://tests/unit/run/run_test_helper.gd")
 
 var dir: String
 var session: RunSession
+var _saved_easy: Dictionary
 
 
 func before_each() -> void:
 	dir = Helper.temp_dir("roster")
 	session = Helper.started_session(dir)
+	_saved_easy = GameConfig.data("opponents")["easy"].duplicate()
 
 
 func after_each() -> void:
+	GameConfig.data("opponents")["easy"] = _saved_easy
 	Helper.remove_dir(dir)
 
 
@@ -253,6 +256,45 @@ func test_medium_opponent_has_no_artifacts() -> void:
 	assert_eq(opponent["id"], "medium")
 	assert_eq(opponent["search_depth"], 2)
 	assert_eq(opponent["artifacts"], [] as Array[String])
+
+
+func test_every_opponent_passes_its_hidden_cards() -> void:
+	for opponent_id: String in GameConfig.data("opponents"):
+		var cfg: Dictionary = GameConfig.data("opponents")[opponent_id]
+		assert_eq(session._opponent_setup(opponent_id)["hidden_cards"], int(cfg["hidden_cards"]), opponent_id)
+
+
+func test_hidden_cards_reach_the_match_and_default_when_missing() -> void:
+	GameConfig.data("opponents")["easy"]["hidden_cards"] = 3
+	session.choose_node("L1")
+	var setup := session.build_match_setup(session.default_roster())
+	assert_eq(setup["opponent"]["hidden_cards"], 3)
+	assert_eq(ChessMatch.new(setup).hidden_card_count(), 3)
+	GameConfig.data("opponents")["easy"].erase("hidden_cards")
+	assert_eq(session._opponent_setup("easy")["hidden_cards"], int(GameConfig.value("match", "opponent_hidden_cards")))
+
+
+func test_opponent_artifacts_never_include_crystal_ball() -> void:
+	var artifacts_cfg: Dictionary = GameConfig.data("artifacts")
+	var pool: Array = artifacts_cfg["opponent_pool"]
+	var expected: Array = artifacts_cfg["artifacts"].keys().filter(func(id: String) -> bool: return id != "foresight")
+	assert_eq(_sorted(pool), _sorted(expected), "every artifact except Crystal Ball")
+	var count := int(GameConfig.data("opponents")["boss"]["artifact_count"])
+	var seen := {}
+	for _i in 50:
+		var picked: Array = session._opponent_setup("boss")["artifacts"]
+		assert_eq(picked.size(), count)
+		assert_false(picked.has("foresight"))
+		for id in picked:
+			assert_true(pool.has(id))
+			seen[id] = true
+	assert_eq(_sorted(seen.keys()), _sorted(pool), "the whole pool is still used")
+
+
+func _sorted(items: Array) -> Array:
+	var copy := items.duplicate()
+	copy.sort()
+	return copy
 
 
 func test_finish_match_restores_the_collection_except_used_shields() -> void:

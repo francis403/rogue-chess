@@ -39,8 +39,7 @@ var pile_numbers: Array[Label] = []
 var redraw_button: Button
 var end_turn_button: Button
 var opponent_energy: PipMeter
-var opponent_hand: HBoxContainer
-var opponent_hand_count: Label
+var opponent_hand: OpponentHand
 var opponent_piles: Label
 var log_lines: VBoxContainer
 var log_scroll: ScrollContainer
@@ -124,13 +123,11 @@ func _opponent_panel() -> PanelContainer:
 	content.add_child(Ui.rule(Palette.RULE_SOFT))
 	var hand_line := Ui.hbox(Metrics.S)
 	hand_line.add_child(_fixed_label("Hand", 56))
-	# Card backs overlap like a held hand, so five or more never widen the fixed column.
-	opponent_hand = Ui.hbox(-8)
-	hand_line.add_child(opponent_hand)
-	opponent_hand_count = Ui.label("", "Caption")
-	opponent_hand_count.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	hand_line.add_child(opponent_hand_count)
+	opponent_hand = OpponentHand.new()
+	hand_line.add_child(opponent_hand.caption)
 	content.add_child(hand_line)
+	content.add_child(opponent_hand)
+	content.add_child(opponent_hand.names_line)
 	var energy_line := Ui.hbox(Metrics.S)
 	energy_line.add_child(_fixed_label("Energy", 56))
 	opponent_energy = PipMeter.new()
@@ -159,6 +156,9 @@ func _log_panel() -> PanelContainer:
 	log_lines = Ui.vbox(2)
 	log_lines.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	log_scroll.add_child(log_lines)
+	# Pinned to the newest line once the new lines are laid out (a deferred scroll
+	# ran before their wrapped height was known and stopped a few lines short).
+	log_scroll.get_v_scroll_bar().changed.connect(_scroll_log_down)
 	log_column.add_child(log_scroll)
 	return log_panel
 
@@ -506,7 +506,7 @@ func sync_panels() -> void:
 		redraw_button.remove_theme_color_override("font_color")
 		redraw_button.remove_theme_color_override("font_hover_color")
 	end_turn_button.disabled = not is_my_turn
-	end_turn_button.text = "End turn" if not game.legal_plays(PLAYER).is_empty() or not is_my_turn else END_TURN_STUCK
+	end_turn_button.text = "End turn" if MatchUiLogic.has_play(game) or not is_my_turn else END_TURN_STUCK
 
 
 ## Each side's "Took" row: the enemy's starting pieces that are no longer on the
@@ -530,7 +530,7 @@ func _sync_taken() -> void:
 
 ## Whether the energy left after a redraw still pays for a card in the deck.
 func redraw_helps() -> bool:
-	return MatchUiLogic.redraw_leaves_a_play(game.energy(PLAYER), int(GameConfig.value("match", "redraw_cost")), _player_deck)
+	return MatchUiLogic.redraw_leaves_a_play(game.energy(PLAYER), int(GameConfig.value("match", "redraw_cost")), _player_deck, game.hidden_card_count() > 0)
 
 
 func sync_penalties() -> void:
@@ -540,15 +540,9 @@ func sync_penalties() -> void:
 		tag.text = "−%d next turn" % penalty if penalty > 0 else ""
 
 
-func sync_opponent_hand() -> void:
-	Ui.clear(opponent_hand)
-	var hand_size := game.hand(OPPONENT).size()
-	for i in hand_size:
-		opponent_hand.add_child(CardView.create_back())
-	if hand_size > 0:
-		opponent_hand_count.text = "%d hidden" % hand_size
-	else:
-		opponent_hand_count.text = "no cards" if game.current_side() == OPPONENT else "refills on its turn"
+## The opponent's hand as the player may see it. Returns the faces just revealed.
+func sync_opponent_hand() -> Array[CardView]:
+	return opponent_hand.show_hand(game.visible_opponent_hand(), game.hidden_card_count())
 
 
 func set_hint(text: String, color: Color, title: String) -> void:
@@ -590,7 +584,6 @@ func log_line(text: String, event_type: String) -> void:
 		var oldest := log_lines.get_child(0)
 		log_lines.remove_child(oldest)
 		oldest.queue_free()
-	_scroll_log_down.call_deferred()
 
 
 func _scroll_log_down() -> void:

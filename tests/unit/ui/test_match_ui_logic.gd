@@ -59,10 +59,13 @@ func test_event_text_names_squares() -> void:
 
 func test_redraw_leaves_a_play_compares_with_cheapest_deck_card() -> void:
 	var deck := H.cards(["rook", "queen", "knight"])
-	assert_true(MatchUiLogic.redraw_leaves_a_play(2, 1, deck), "1 energy left pays for the knight")
-	assert_false(MatchUiLogic.redraw_leaves_a_play(1, 1, deck), "0 energy left pays for nothing")
-	assert_true(MatchUiLogic.redraw_leaves_a_play(1, 1, H.cards(["pawn:cheaper"])), "a 0-cost card counts")
-	assert_false(MatchUiLogic.redraw_leaves_a_play(3, 1, []))
+	assert_true(MatchUiLogic.redraw_leaves_a_play(2, 1, deck, true), "1 energy left pays for the knight")
+	assert_false(MatchUiLogic.redraw_leaves_a_play(1, 1, deck, true), "0 energy left pays for nothing")
+	assert_true(MatchUiLogic.redraw_leaves_a_play(1, 1, H.cards(["pawn:cheaper"]), true), "a 0-cost card counts")
+	assert_false(MatchUiLogic.redraw_leaves_a_play(3, 1, [], true))
+	var scouts := H.cards(["scout:cheaper", "rook"])
+	assert_true(MatchUiLogic.redraw_leaves_a_play(1, 1, scouts, true), "a 0-cost Scout counts while cards are hidden")
+	assert_false(MatchUiLogic.redraw_leaves_a_play(1, 1, scouts, false), "not when nothing is hidden")
 
 
 func _checking_game() -> ChessMatch:

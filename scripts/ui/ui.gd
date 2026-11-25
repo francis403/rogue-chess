@@ -161,7 +161,11 @@ static func piece_tooltip(data: PieceData) -> String:
 
 
 static func card_tooltip(card: CardData) -> String:
-	var what := "Move any one piece (the only way to move your king)" if card.type == "move" else "Move one %s" % card.type
+	var what := "Move one %s" % card.type
+	if card.type == "move":
+		what = "Move any one piece (the only way to move your king)"
+	elif card.is_reveal():
+		what = "%s. Plays at once: no piece moves" % (String(GameConfig.data("cards")[card.type]["desc"]) % card.reveal_amount())
 	var text := "%s · cost %d\n%s" % [card.display_name(), card.cost(), what]
 	if card.upgrade != "":
 		text += "\n%s: %s" % [upgrade_name("card", card.upgrade), upgrade_desc("card", card.upgrade)]

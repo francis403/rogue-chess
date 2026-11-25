@@ -8,5 +8,6 @@
   "redraw_cost": 1,
   "max_rounds": 40,
   "player_moves_first": true,
-  "check_escape_cost": 1
+  "check_escape_cost": 1,
+  "opponent_hidden_cards": 1
 }

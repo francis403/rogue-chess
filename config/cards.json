@@ -4,5 +4,6 @@
   "bishop": { "cost": 1, "rarity": "normal", "name": "Bishop" },
   "rook":   { "cost": 2, "rarity": "rare",   "name": "Rook" },
   "queen":  { "cost": 3, "rarity": "rare",   "name": "Queen" },
-  "move":   { "cost": 1, "rarity": "normal", "name": "Move" }
+  "move":   { "cost": 1, "rarity": "normal", "name": "Move" },
+  "scout":  { "cost": 1, "rarity": "normal", "name": "Scout", "reveal": 2, "desc": "Reveal %d hidden opponent cards" }
 }

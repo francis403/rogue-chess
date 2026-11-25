@@ -496,13 +496,14 @@ func _opponent_setup(opponent_id: String) -> Dictionary:
 	for card_type in cfg["deck"]:
 		opponent_deck.append(CardData.new(card_type))
 	var opponent_artifacts: Array[String] = []
-	opponent_artifacts.assign(_pick_distinct(GameConfig.data("artifacts")["artifacts"].keys(), int(cfg["artifact_count"])))
+	opponent_artifacts.assign(_pick_distinct(GameConfig.data("artifacts")["opponent_pool"], int(cfg["artifact_count"])))
 	return {
 		"id": opponent_id,
 		"name": cfg["name"],
 		"difficulty": cfg["difficulty"],
 		"search_depth": int(cfg["search_depth"]),
 		"random_chance": float(cfg["random_chance"]),
+		"hidden_cards": int(cfg.get("hidden_cards", GameConfig.value("match", "opponent_hidden_cards"))),
 		"roster": roster,
 		"deck": opponent_deck,
 		"artifacts": opponent_artifacts,

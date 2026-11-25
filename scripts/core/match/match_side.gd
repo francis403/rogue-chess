@@ -23,10 +23,10 @@ func has_artifact(artifact_id: String) -> bool:
 	return artifacts.has(artifact_id)
 
 
-func artifact_amount(artifact_id: String) -> int:
+func artifact_amount(artifact_id: String, key: String = "amount") -> int:
 	if not has_artifact(artifact_id):
 		return 0
-	return int(GameConfig.data("artifacts")["artifacts"][artifact_id]["amount"])
+	return int(GameConfig.data("artifacts")["artifacts"][artifact_id][key])
 
 
 func card_count() -> int:

@@ -1,7 +1,8 @@
 class_name CardData
 extends RefCounted
 ## A card in the run deck. type is a piece type ("pawn", "knight", "bishop",
-## "rook", "queen") or "move". upgrade is "", "cheaper", "hold" or "book".
+## "rook", "queen"), "move", or "scout" (reveals hidden opponent cards, moves
+## nothing). upgrade is "", "cheaper", "hold" or "book".
 
 static var _next_uid: int = 1
 
@@ -26,6 +27,15 @@ func cost() -> int:
 
 func is_rare() -> bool:
 	return GameConfig.data("cards")[type]["rarity"] == "rare"
+
+
+## Cards that reveal hidden opponent cards instead of moving a piece (Scout).
+func reveal_amount() -> int:
+	return int(GameConfig.data("cards")[type].get("reveal", 0))
+
+
+func is_reveal() -> bool:
+	return reveal_amount() > 0
 
 
 func display_name() -> String:

@@ -24,6 +24,8 @@ var _player_pieces_moved: Array[int] = []
 var _pending_escape_side: int = -1
 var _escape_squares: Array[Vector2i] = []
 var _escape_penalty: Array[int] = [0, 0]
+var _opponent_hidden_base: int = 0
+var _hidden_uids: Array[int] = []
 
 
 ## An empty setup builds a blank match; only clone() uses that.
@@ -33,6 +35,7 @@ func _init(setup: Dictionary = {}) -> void:
 	_rng.seed = int(setup.get("seed", 0))
 	_board = MatchBoard.new(int(_config("board_size")))
 	_opponent_id = String(setup["opponent"].get("id", ""))
+	_opponent_hidden_base = maxi(int(setup["opponent"].get("hidden_cards", _config("opponent_hidden_cards"))), 0)
 	_add_side(PLAYER, setup["player"])
 	_add_side(OPPONENT, setup["opponent"])
 	if setup.has("holes"):
@@ -42,7 +45,9 @@ func _init(setup: Dictionary = {}) -> void:
 		_place_random_holes()
 	_first_side = PLAYER if bool(_config("player_moves_first")) else OPPONENT
 	_current = _first_side
-	_initial_events = _start_turn()
+	# The opponent holds its next hand during the player's turn, so it draws now.
+	_initial_events = _draw(OPPONENT)
+	_initial_events.append_array(_start_turn())
 
 
 ## Events produced by starting the first turn inside the constructor.
@@ -79,8 +84,24 @@ func max_energy(side: int) -> int:
 
 
 ## Cards are shared with the match: read them, never modify them.
+## The opponent's hand includes its hidden cards: for display use
+## visible_opponent_hand() and hidden_card_count() instead.
 func hand(side: int) -> Array[CardData]:
 	return _sides[side].hand.duplicate()
+
+
+## The opponent's cards the player may see, in hand order. Read only.
+func visible_opponent_hand() -> Array[CardData]:
+	var visible: Array[CardData] = []
+	for card in _sides[OPPONENT].hand:
+		if not _hidden_uids.has(card.uid):
+			visible.append(card)
+	return visible
+
+
+## How many of the opponent's cards in hand are hidden from the player.
+func hidden_card_count() -> int:
+	return _sides[OPPONENT].hand.size() - visible_opponent_hand().size()
 
 
 func draw_pile_size(side: int) -> int:
@@ -194,7 +215,16 @@ func legal_plays(side: int) -> Array[Dictionary]:
 
 
 func is_card_playable(card_index: int) -> bool:
+	var hand_cards := _sides[_current].hand
+	if card_index >= 0 and card_index < hand_cards.size() and hand_cards[card_index].is_reveal():
+		return can_reveal(card_index)
 	return not pieces_for_card(card_index).is_empty()
+
+
+## A Scout card can be played now: the player's turn, affordable, and an
+## opponent card is still hidden.
+func can_reveal(card_index: int) -> bool:
+	return _reveal_error(card_index) == ""
 
 
 ## Squares of the current side's pieces this card can move now (empty if unaffordable).
@@ -245,6 +275,32 @@ func play(card_index: int, from: Vector2i, to: Vector2i) -> Array[Dictionary]:
 	return events
 
 
+## Plays a Scout: no piece moves; the next hidden opponent cards (hand order)
+## are shown, never more than are hidden.
+func reveal(card_index: int) -> Array[Dictionary]:
+	var error := _reveal_error(card_index)
+	if error != "":
+		return [_error_event(error)]
+	var side_state := _sides[_current]
+	var card: CardData = side_state.hand[card_index]
+	side_state.hand.remove_at(card_index)
+	side_state.discard.append(card)
+	side_state.energy -= card.cost()
+	var amount := card.reveal_amount()
+	var revealed := 0
+	for hand_card in _sides[OPPONENT].hand:
+		if revealed < amount and _hidden_uids.has(hand_card.uid):
+			_hidden_uids.erase(hand_card.uid)
+			revealed += 1
+	return [
+		{
+			"type": "card_played", "side": _current, "card_index": card_index, "card_uid": card.uid,
+			"card_type": card.type, "cost": card.cost(), "energy": side_state.energy,
+		},
+		{"type": "reveal", "side": _current, "count": revealed, "hidden": hidden_card_count()},
+	]
+
+
 ## D57: the checked king moves to one of escape_squares(), out of turn and
 ## without a card. Its cost comes off the escaping side's next turn (D59).
 func escape(to: Vector2i) -> Array[Dictionary]:
@@ -282,7 +338,7 @@ func redraw() -> Array[Dictionary]:
 	side_state.energy -= int(_config("redraw_cost"))
 	var events: Array[Dictionary] = [{"type": "redraw", "side": _current, "energy": side_state.energy}]
 	events.append({"type": "discard", "side": _current, "card_uids": side_state.discard_hand(false)})
-	events.append_array(side_state.draw_up_to(int(_config("hand_size")), _rng))
+	events.append_array(_draw(_current))
 	return events
 
 
@@ -303,6 +359,8 @@ func end_turn() -> Array[Dictionary]:
 	if side != _first_side and _round >= max_rounds():
 		_end_by_turn_limit(events)
 		return events
+	if side == OPPONENT:
+		events.append_array(_draw(OPPONENT))
 	_current = 1 - side
 	if _current == _first_side:
 		_round += 1
@@ -332,6 +390,8 @@ func clone() -> ChessMatch:
 	copy._pending_escape_side = _pending_escape_side
 	copy._escape_squares = _escape_squares.duplicate()
 	copy._escape_penalty = _escape_penalty.duplicate()
+	copy._opponent_hidden_base = _opponent_hidden_base
+	copy._hidden_uids = _hidden_uids.duplicate()
 	return copy
 
 
@@ -377,9 +437,26 @@ func _start_turn() -> Array[Dictionary]:
 		{"type": "turn_start", "side": _current, "round": _round, "escape_penalty": penalty},
 		{"type": "energy", "side": _current, "energy": side_state.energy, "escape_penalty": penalty},
 	]
-	events.append_array(side_state.draw_up_to(int(_config("hand_size")), _rng))
+	events.append_array(_draw(_current))
 	if not has_any_piece_move(_current):
 		_end_match(1 - _current, "no_moves", events)
+	return events
+
+
+## Draws `side` up to the hand size. When the opponent draws, its new hand
+## gets its hidden cards: the last ones drawn, `hidden_cards` minus Crystal Ball.
+## The opponent's draw events don't say which card was drawn.
+func _draw(side: int) -> Array[Dictionary]:
+	var events := _sides[side].draw_up_to(int(_config("hand_size")), _rng)
+	if side != OPPONENT or events.is_empty():
+		return events
+	var hand_cards := _sides[OPPONENT].hand
+	var count := clampi(_opponent_hidden_base - _sides[PLAYER].artifact_amount("foresight"), 0, hand_cards.size())
+	_hidden_uids.clear()
+	for card in hand_cards.slice(hand_cards.size() - count):
+		_hidden_uids.append(card.uid)
+	for event in events:
+		event.erase("card_type")
 	return events
 
 
@@ -489,6 +566,26 @@ func _clear_pending_escape() -> void:
 	_escape_squares.clear()
 
 
+func _reveal_error(card_index: int) -> String:
+	if _is_over:
+		return "match_over"
+	if _pending_escape_side != -1:
+		return "escape_pending"
+	if _current != PLAYER:
+		return "player_only"
+	var side_state := _sides[_current]
+	if card_index < 0 or card_index >= side_state.hand.size():
+		return "bad_card_index"
+	var card: CardData = side_state.hand[card_index]
+	if not card.is_reveal():
+		return "wrong_card"
+	if card.cost() > side_state.energy:
+		return "not_enough_energy"
+	if hidden_card_count() == 0:
+		return "nothing_hidden"
+	return ""
+
+
 func _play_error(card_index: int, from: Vector2i, to: Vector2i) -> String:
 	if _is_over:
 		return "match_over"
@@ -523,6 +620,9 @@ func _card_can_move(card: CardData, piece: MatchPiece) -> bool:
 ## cause: "capture", "explosion" or "burn_out" (the latter emits a burn_out event).
 func _credit_capture(victim: MatchPiece, credited_side: int, extra_points: int, cause: String, events: Array[Dictionary]) -> void:
 	var points := victim.value() + extra_points + _sides[credited_side].artifact_amount("capture_bonus")
+	# Crystal Ball's cost: a captured player piece is worth more to the opponent.
+	if victim.side == PLAYER:
+		points += _sides[PLAYER].artifact_amount("foresight", "penalty")
 	_sides[credited_side].score += points
 	if victim.type == "king":
 		_kings_captured[victim.side] = true

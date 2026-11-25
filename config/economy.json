@@ -11,7 +11,7 @@
   "shop": {
 	"card_offers": 3,
 	"card_prices": { "normal": 2, "rare": 3 },
-	"card_pool": ["pawn", "knight", "bishop", "rook", "queen", "move"],
+	"card_pool": ["pawn", "knight", "bishop", "rook", "queen", "move", "scout"],
 	"remove_price": 1,
 	"removes_per_visit": 1,
 	"piece_offers": 2,

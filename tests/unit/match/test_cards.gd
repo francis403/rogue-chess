@@ -49,7 +49,7 @@ func test_king_can_only_move_with_a_move_card() -> void:
 
 
 func test_card_costs_come_from_config() -> void:
-	var expected := {"pawn": 1, "knight": 1, "bishop": 1, "rook": 2, "queen": 3, "move": 1}
+	var expected := {"pawn": 1, "knight": 1, "bishop": 1, "rook": 2, "queen": 3, "move": 1, "scout": 1}
 	for type: String in expected:
 		assert_eq(CardData.new(type).cost(), expected[type], type)
 
@@ -108,7 +108,7 @@ func test_hand_of_five_and_three_energy() -> void:
 	assert_eq(game.draw_pile_size(P), 3)
 	assert_eq(game.energy(P), 3)
 	assert_eq(game.max_energy(P), 3)
-	assert_eq(game.hand(O).size(), 0, "opponent draws at its own turn start")
+	assert_eq(game.hand(O).size(), 5, "the opponent holds its next hand during the player's turn")
 
 
 func test_energy_resets_every_turn() -> void:
@@ -138,9 +138,9 @@ func test_empty_draw_pile_reshuffles_the_discard() -> void:
 	assert_eq(game.draw_pile_size(P), 2)
 	game.end_turn()
 	var events := game.end_turn()
-	assert_eq(H.events_of(events, "shuffle").size(), 1)
-	assert_eq(H.events_of(events, "shuffle")[0]["count"], 5)
-	assert_eq(H.events_of(events, "draw").size(), 5)
+	assert_eq(H.side_events(events, "shuffle", P).size(), 1)
+	assert_eq(H.side_events(events, "shuffle", P)[0]["count"], 5)
+	assert_eq(H.side_events(events, "draw", P).size(), 5)
 	assert_eq(game.hand(P).size(), 5)
 	assert_eq(game.draw_pile_size(P), 2)
 	assert_eq(game.discard_size(P), 0)
@@ -171,7 +171,7 @@ func test_hold_card_stays_in_hand_and_counts_toward_hand_size() -> void:
 	assert_eq(game.hand(P)[0].upgrade, "hold")
 	var events := game.end_turn()
 	assert_eq(game.hand(P).size(), 5)
-	assert_eq(H.events_of(events, "draw").size(), 4, "Hold card counts toward the hand size")
+	assert_eq(H.side_events(events, "draw", P).size(), 4, "Hold card counts toward the hand size")
 	assert_true(H.card_index(game, "move", "hold") >= 0)
 
 
@@ -181,7 +181,7 @@ func test_hold_card_always_kept_when_whole_deck_is_in_hand() -> void:
 	assert_eq(game.hand(P).size(), 1)
 	assert_eq(game.discard_size(P), 4)
 	var events := game.end_turn()
-	assert_eq(H.events_of(events, "draw").size(), 4)
+	assert_eq(H.side_events(events, "draw", P).size(), 4)
 
 
 func test_played_hold_card_is_discarded() -> void:

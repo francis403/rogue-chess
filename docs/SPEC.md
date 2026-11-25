@@ -27,7 +27,7 @@ Goal of the MVP: prove that upgrading pieces and cards works and is fun. Not in 
 
 **Piece upgrades** (max one per piece, any upgrade on any piece): Range +1 (2 points; no effect on rook/bishop but still allowed); Deploy cost −1 (2 points; capture value unchanged); Shield (4 points; blocks the first capture attempt, the attacker stays where it was, then the shield is gone for good).
 
-**Opponents:** 3 fixed: Easy (king, 4 pawns, bishop, knight; search depth 1, 30% random), Medium (king, 4 pawns, rook, knight; depth 2, 15% random), Boss (king, 4 pawns, queen; depth 2, 5% random). They use a deck and energy like the player, play their best affordable move, and their hand is hidden. Stronger opponents may get random artifacts.
+**Opponents:** 3 fixed: Easy (king, 4 pawns, bishop, knight; search depth 1, 30% random), Medium (king, 4 pawns, rook, knight; depth 2, 15% random), Boss (king, 4 pawns, queen; depth 2, 5% random). They use a deck and energy like the player, play their best affordable move, and their hand is shown except for hidden cards (see docs/specs/opponent-card-visibility.md, D63–D70). Stronger opponents may get random artifacts.
 
 **Piece sets:** Standard (normal chess pieces). Fire (unlocked by beating the boss): once a Fire piece moves it is set on fire and lasts 3 turns; each Fire piece is worth 1 less than its standard value (pick cost and capture points), and any piece it captures gives +2 points; a burned-out piece is removed and counts as captured by the opponent. Water is not in the MVP.
 
