@@ -5,11 +5,13 @@ extends Control
 ## in; a loss is quieter: no burst, the pieces fade in and the king lies down.
 ## Sound: a run_victory / run_defeat stinger over silence (main.gd stops the music),
 ## a score_tick as each figure lands, and a new unlock opens with its
-## unlock_fanfare in the same moment: after the figures, and never before the run
-## stinger has rung out (Sfx.stinger_time_left()); until then its panel shows a
-## sealed emblem, so the page is never lopsided. The lounge loop returns when the
-## last stinger (run stinger, then fanfare) has ended. Reduced motion: no burst,
-## drop or topple motion; figures still count, panels fade.
+## unlock_fanfare in the same moment: when the run stinger has rung out, but no
+## later than motion "unlock_hold" after the last figure (the fanfare then fades the
+## stinger's tail out). Until then its panel shows a sealed emblem, so the page is
+## never lopsided, and the seal glows and pulses faster as the opening nears.
+## The lounge loop returns when the last stinger has ended; leaving the screen
+## early fades the stinger out. Reduced motion: no burst, drop, topple or seal
+## pulse; figures still count, panels fade.
 
 const ROW_TOKEN := 40.0
 ## Big enough for a ≥ 12 px name and a readable cost coin; copies show "×N".
@@ -79,6 +81,11 @@ func _ready() -> void:
 		_music_back_after_stingers()
 
 
+## Leaving early (Start new run, Title) doesn't let the run stinger trail over the next screen.
+func _exit_tree() -> void:
+	Sfx.stop_stinger()
+
+
 ## The lounge loop comes back once the stingers sounding now (and queued) have
 ## rung out: real audio seconds, so the animation speed never shortens it.
 func _music_back_after_stingers() -> void:
@@ -114,14 +121,20 @@ func _play(is_win: bool, row: PieceRow, flourish: Flourish, unlock_panel: PanelC
 	if not is_new:
 		Feel.reveal(items, 0.06, start)
 		return
-	# Real seconds, both: the figures' end (scaled by the animation speed) and the
-	# run stinger's end (audio time). The reveal, its fanfare and its glow all
-	# happen at the later one, together.
-	var figures_done := Settings.time(start + stagger * _stats.size() + Motion.seconds("run_count_up"))
-	var open_at := maxf(figures_done, Sfx.stinger_time_left())
+	# Real seconds: the figures' end (scaled by the animation speed) and the run
+	# stinger's end (audio time). The unlock opens when the stinger ends, but no
+	# later than motion "unlock_hold" after the figures; the seal builds up from the last
+	# figure's start. The reveal, its fanfare and its glow happen together.
+	var last_figure := Settings.time(start + stagger * (_stats.size() - 1))
+	var figures_done := last_figure + Settings.time(Motion.seconds("run_count_up"))
+	var open_at := clampf(Sfx.stinger_time_left(), figures_done, figures_done + Motion.time("unlock_hold"))
+	_seal.anticipate(last_figure, open_at)
 	create_tween().tween_callback(func() -> void:
 		_seal.open()
-		Feel.reveal(items, 0.06)
+		# The content deals in as the seal is gone, so it never draws over the title.
+		Feel.reveal(items, 0.06, Seal.FADE * Motion.seconds("reveal"))
+		# A stinger still sounding fades out; the fanfare (a waiting stinger) then starts at once.
+		Sfx.stop_stinger()
 		Sfx.play("unlock_fanfare", false)
 		Feel.glow(unlock_panel)
 		_music_back_after_stingers()).set_delay(open_at)
@@ -196,22 +209,14 @@ func _summary_panel(summary: Dictionary) -> PanelContainer:
 	column.add_child(Ui.rule(Palette.RULE_SOFT))
 	var deck := HFlowContainer.new()
 	deck.add_theme_constant_override("h_separation", Metrics.XS + 2)
-	deck.add_theme_constant_override("v_separation", Metrics.L)
+	# Each card's holder already keeps the badge room under it.
+	deck.add_theme_constant_override("v_separation", Metrics.XS)
 	var cards: Array = summary["deck"].map(func(card_dict: Dictionary) -> CardData: return CardData.from_dict(card_dict))
 	for group: Array in ItemOverlay.group_cards(cards):
 		var view := CardView.create(group[0], DECK_CARD)
 		view.is_interactive = false
 		view.mouse_filter = Control.MOUSE_FILTER_PASS
-		if group.size() == 1:
-			deck.add_child(view)
-			continue
-		var holder := Control.new()
-		holder.custom_minimum_size = DECK_CARD
-		holder.add_child(view)
-		var badge := ItemOverlay.count_badge(group.size())
-		holder.add_child(badge)
-		ItemOverlay.pin_badge(badge)
-		deck.add_child(holder)
+		deck.add_child(ItemOverlay.badged(view, group.size()))
 	column.add_child(deck)
 	var pieces := HFlowContainer.new()
 	pieces.add_theme_constant_override("h_separation", 2)
@@ -283,25 +288,48 @@ class Flourish extends Control:
 
 
 ## A new unlock's sealed emblem: a brass-rimmed disc with a "?" in the middle of
-## the unlock panel until the unlock opens; then it grows a little and fades.
+## the unlock panel until the unlock opens; then it shrinks and fades quickly,
+## before the unlock's content deals in where it was.
+## Before it opens it charges: a brass halo that brightens and beats faster.
 class Seal extends Control:
 	const RADIUS := 36.0
+	## Halo beats over a full charge (the ease-in makes them come quicker).
+	const BEATS := 4
+	## Share of motion "reveal" the opening seal takes to shrink and fade.
+	const FADE := 0.4
+	var charge := 0.0:
+		set(value):
+			charge = value
+			queue_redraw()
 
 	func _init() -> void:
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+	## Charges from `from` to `to` (seconds from now). Nothing with reduced motion.
+	func anticipate(from: float, to: float) -> void:
+		if Motion.reduced() or to - from < 0.1:
+			return
+		var tween := create_tween()
+		tween.tween_interval(from)
+		tween.tween_property(self, "charge", 1.0, to - from).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+
 	func open() -> void:
 		pivot_offset = size / 2.0
 		var tween := create_tween().set_parallel().set_ease(Tween.EASE_OUT)
-		tween.tween_property(self, "modulate:a", 0.0, Motion.time("reveal"))
+		tween.tween_property(self, "modulate:a", 0.0, Motion.time("reveal") * FADE)
 		if not Motion.reduced():
-			tween.tween_property(self, "scale", Vector2.ONE * 1.25, Motion.time("reveal"))
+			tween.tween_property(self, "scale", Vector2.ONE * 0.6, Motion.time("reveal") * FADE)
 		tween.chain().tween_callback(queue_free)
 
 	func _draw() -> void:
 		var centre := size / 2.0
+		if charge > 0.0:
+			var beat := 0.5 - 0.5 * cos(charge * TAU * BEATS)
+			for ring in 3:
+				var reach := (ring + 1) * (3.0 + 4.0 * charge * beat)
+				draw_circle(centre, RADIUS + reach, Color(Palette.BRASS, charge * (0.16 + 0.16 * beat) / (ring + 1)))
 		draw_circle(centre, RADIUS, Palette.WALNUT_DEEP)
-		draw_arc(centre, RADIUS, 0, TAU, 48, Palette.BRASS, 2.0, true)
+		draw_arc(centre, RADIUS, 0, TAU, 48, Palette.BRASS, 2.0 + 1.5 * charge, true)
 		draw_arc(centre, RADIUS - 6.0, 0, TAU, 48, Color(Palette.BRASS, 0.35), 1.0, true)
 		var font := UiFonts.serif_bold()
 		var font_size := 34

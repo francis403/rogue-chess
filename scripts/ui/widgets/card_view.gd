@@ -14,13 +14,16 @@ signal drag_started
 const SIZE := Vector2(104, 146)
 ## The opponent's hand: shown cards (minis) and hidden ones (backs) share this size.
 const MINI := Vector2(40, 56)
-## A mini's cost coin, as a share of the full card's (big enough for a MIN_FONT figure).
-const MINI_COIN := 0.62
 ## Smallest text on a card (px at 1280x720).
 const MIN_FONT := 12
 ## Cost coin, laid out for SIZE (scaled with the card): centre and outer radius.
 const COIN_CENTRE := 17.0
 const COIN_RADIUS := 12.5
+## A mini's cost coin, as a share of the full card's: sized from the MIN_FONT
+## figure it holds (outer radius 0.72 of it, about 8.6 px), never from the card.
+const MINI_COIN := MIN_FONT * 0.72 / COIN_RADIUS
+## Gap between a mini's coin and its card edge, so the coin sits inside the border.
+const MINI_COIN_INSET := 2.0
 ## Upgrade ribbon: text padding on each side and its gap to the card's right edge.
 const RIBBON_PAD := 4.0
 const RIBBON_EDGE := 4.0
@@ -66,6 +69,13 @@ var _eye: PackedVector2Array = PackedVector2Array()
 var _lift: float = 0.0:
 	set(value):
 		_lift = value
+		queue_redraw()
+## Turning over: 0 shows the back, 1 the face; the card narrows to edge-on at
+## 0.5 and swaps sides there. Drawn, not scaled, so a container's layout (which
+## resets `scale`) never cuts a flip short.
+var flip: float = 1.0:
+	set(value):
+		flip = value
 		queue_redraw()
 ## Extra draw offset while dealing in or sweeping out.
 var _slide: Vector2 = Vector2.ZERO:
@@ -179,18 +189,19 @@ func _update_lift() -> void:
 
 func _draw() -> void:
 	var rect := Rect2(Vector2(0, -_lift), size)
-	if is_back:
-		_draw_back(Rect2(Vector2.ZERO, size))
+	var turn := absf(2.0 * flip - 1.0)  # the drawn width, around the centre
+	if is_back or flip < 0.5:
+		_draw_back(Rect2(Vector2.ZERO, size), Transform2D(0.0, Vector2(turn, 1.0), 0.0, Vector2(size.x * (1.0 - turn) / 2.0, 0.0)))
 		return
 	# Grows a little with the lift (hover 2 %, selected 5 %), around the centre.
 	var grow := 1.0 + _lift * 0.0036
-	draw_set_transform(_slide + size * (1.0 - grow) / 2.0, 0.0, Vector2.ONE * grow)
+	draw_set_transform(_slide + Vector2(size.x * (1.0 - grow * turn), size.y * (1.0 - grow)) / 2.0, 0.0, Vector2(grow * turn, grow))
 	draw_style_box(_face_style(), rect)
 	draw_rect(rect.grow(-5 * _scale()), Palette.RULE_SOFT, false, 1.0)
 	if is_mini:
 		# The glyph sits lower and larger: no name below it, the coin above it.
 		_draw_glyph(rect.position + Vector2(rect.size.x / 2.0, rect.size.y * 0.6), rect.size.x * 0.4)
-		_draw_cost(rect.position + Vector2.ONE * COIN_CENTRE * MINI_COIN, MINI_COIN)
+		_draw_cost(rect.position + Vector2.ONE * (COIN_RADIUS * MINI_COIN + MINI_COIN_INSET), MINI_COIN)
 		return
 	# Same size and place on every card, ribbon or not (the ribbon may overlap its rim).
 	_draw_glyph(rect.position + Vector2(rect.size.x / 2.0, rect.size.y * 0.46), rect.size.x * 0.3)
@@ -384,12 +395,14 @@ func _set_triangle(a: Vector2, b: Vector2, c: Vector2) -> void:
 
 ## The opponent's hidden cards: the same walnut face and rule as a card front,
 ## with an oxblood field, a brass inner rule and a brass lozenge (the back's crest).
-func _draw_back(rect: Rect2) -> void:
+## `base` places it (narrowed while a face turns over).
+func _draw_back(rect: Rect2, base: Transform2D) -> void:
+	draw_set_transform_matrix(base)
 	draw_style_box(UiTheme.shared_box(Palette.WALNUT_HIGH, Palette.RULE_STRONG, 3, 0), rect)
 	var field := rect.grow(-2.0)
 	draw_style_box(UiTheme.shared_box(Palette.OXBLOOD.darkened(0.45), Color.TRANSPARENT, 2, 0), field)
 	draw_rect(field.grow(-2.0), Palette.BRASS_DIM, false, 1.0)
 	var crest := minf(field.size.x, field.size.y) * 0.16
-	draw_set_transform(field.get_center(), PI / 4.0)
+	draw_set_transform_matrix(base * Transform2D(PI / 4.0, field.get_center()))
 	draw_rect(Rect2(-crest, -crest, crest * 2.0, crest * 2.0), Palette.BRASS)
 	draw_set_transform(Vector2.ZERO)

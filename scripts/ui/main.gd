@@ -3,17 +3,18 @@ extends Control
 ## and owns the global keys (rc_settings F1, Esc settings outside the match,
 ## rc_deck D, rc_collection C; remappable, see Settings).
 
+## Preloaded once (a bad path fails at parse time, not on the screen change).
 const SCREENS := {
-	"TITLE": "res://scenes/screens/title_screen.tscn",
-	"SET_SELECT": "res://scenes/screens/set_select_screen.tscn",
-	"ARTIFACT_SELECT": "res://scenes/screens/artifact_select_screen.tscn",
-	"MAP": "res://scenes/screens/map_screen.tscn",
-	"MATCH_SETUP": "res://scenes/screens/roster_screen.tscn",
-	"MATCH": "res://scenes/screens/match_screen.tscn",
-	"REWARD": "res://scenes/screens/reward_screen.tscn",
-	"SHOP": "res://scenes/screens/shop_screen.tscn",
-	"COACHING": "res://scenes/screens/coaching_screen.tscn",
-	"RUN_END": "res://scenes/screens/run_end_screen.tscn",
+	"TITLE": preload("res://scenes/screens/title_screen.tscn"),
+	"SET_SELECT": preload("res://scenes/screens/set_select_screen.tscn"),
+	"ARTIFACT_SELECT": preload("res://scenes/screens/artifact_select_screen.tscn"),
+	"MAP": preload("res://scenes/screens/map_screen.tscn"),
+	"MATCH_SETUP": preload("res://scenes/screens/roster_screen.tscn"),
+	"MATCH": preload("res://scenes/screens/match_screen.tscn"),
+	"REWARD": preload("res://scenes/screens/reward_screen.tscn"),
+	"SHOP": preload("res://scenes/screens/shop_screen.tscn"),
+	"COACHING": preload("res://scenes/screens/coaching_screen.tscn"),
+	"RUN_END": preload("res://scenes/screens/run_end_screen.tscn"),
 }
 const HUD_SCREENS := ["MAP", "MATCH_SETUP", "MATCH", "REWARD", "SHOP", "COACHING"]
 ## The match uses Esc to cancel a selection, so Esc never opens settings there.
@@ -55,7 +56,7 @@ func show_screen(screen_name: String) -> void:
 		Sfx.play("screen_transition")
 	_play_music(screen_name)
 	current_screen_name = screen_name
-	current_screen = load(SCREENS[screen_name]).instantiate()
+	current_screen = (SCREENS[screen_name] as PackedScene).instantiate()
 	_screen_host.add_child(current_screen)
 	_hud.visible = HUD_SCREENS.has(screen_name)
 	_hud.refresh()

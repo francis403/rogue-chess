@@ -55,12 +55,12 @@ func load_from(new_path: String) -> void:
 	path = new_path
 	_values = defaults()
 	_bindings = {}
-	var parsed = JSON.parse_string(FileAccess.get_file_as_string(path)) if FileAccess.file_exists(path) else null
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path)) if FileAccess.file_exists(path) else null
 	if parsed is Dictionary:
 		for key: String in _values:
 			if parsed.has(key) and typeof(parsed[key]) == typeof(_values[key]):
 				_values[key] = parsed[key]
-		var saved_bindings = parsed.get("bindings")
+		var saved_bindings: Variant = parsed.get("bindings")
 		if saved_bindings is Dictionary:
 			for action: String in saved_bindings:
 				if input_actions().has(action) and saved_bindings[action] is float:

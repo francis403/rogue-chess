@@ -13,6 +13,8 @@ const KEY_COLUMN := 110.0
 const KEY_CAP_ROOM := 34.0
 ## Spare height the KEYS list needs before it comes back (see _fit_keys).
 const KEYS_SLACK := float(Metrics.XL)
+## Height of the fade over the log's top edge (about one caption line).
+const LOG_FADE := 18.0
 
 var game: ChessMatch
 var names: Array[String] = []
@@ -40,9 +42,14 @@ var redraw_button: Button
 var end_turn_button: Button
 var opponent_energy: PipMeter
 var opponent_hand: OpponentHand
+## Each side's artifact chips by artifact id (flashed when the artifact scores).
+var _artifact_chips: Array[Dictionary] = [{}, {}]
 var opponent_piles: Label
 var log_lines: VBoxContainer
 var log_scroll: ScrollContainer
+## Over the log's top edge once it scrolls: the line cut there fades into the
+## panel instead of showing half its letters.
+var _log_fade: TextureRect
 var escape_box: PanelContainer
 var escape_cost_label: Label
 ## The prompt's key line: it depends on how many escape squares there are.
@@ -118,12 +125,20 @@ func _opponent_panel() -> PanelContainer:
 	tags.add_theme_constant_override("v_separation", Metrics.XS)
 	tags.add_child(Ui.chip(String(_opponent_setup.get("difficulty", "")), Palette.OXBLOOD_INK if Ui.is_boss(String(_opponent_setup.get("id", ""))) else Palette.IVORY_SOFT))
 	for artifact_id in game.artifacts(OPPONENT):
-		tags.add_child(Ui.chip(Ui.artifact_name(artifact_id), Palette.BRASS, Ui.artifact_desc(artifact_id)))
+		var chip := Ui.chip(Ui.artifact_name(artifact_id), Palette.BRASS, Ui.artifact_desc(artifact_id))
+		_artifact_chips[OPPONENT][artifact_id] = chip
+		tags.add_child(chip)
 	content.add_child(tags)
 	content.add_child(Ui.rule(Palette.RULE_SOFT))
 	var hand_line := Ui.hbox(Metrics.S)
 	hand_line.add_child(_fixed_label("Hand", 56))
 	opponent_hand = OpponentHand.new()
+	# What shown and hidden mean, and why one more is shown (Deep Vision).
+	var why := "Face up: the cards you can see. Card backs: the cards it drew last stay hidden; a Scout reveals them."
+	if game.artifacts(PLAYER).has("foresight"):
+		why += "\n%s: %s" % [Ui.artifact_name("foresight"), Ui.artifact_desc("foresight")]
+	hand_line.tooltip_text = why
+	hand_line.mouse_filter = Control.MOUSE_FILTER_PASS
 	hand_line.add_child(opponent_hand.caption)
 	content.add_child(hand_line)
 	content.add_child(opponent_hand)
@@ -159,7 +174,30 @@ func _log_panel() -> PanelContainer:
 	# Pinned to the newest line once the new lines are laid out (a deferred scroll
 	# ran before their wrapped height was known and stopped a few lines short).
 	log_scroll.get_v_scroll_bar().changed.connect(_scroll_log_down)
-	log_column.add_child(log_scroll)
+	log_scroll.get_v_scroll_bar().value_changed.connect(_update_log_fade.unbind(1))
+	# The fade lies over the scroll (a MarginContainer stacks its children).
+	var log_box := MarginContainer.new()
+	log_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	log_box.add_child(log_scroll)
+	_log_fade = TextureRect.new()
+	var gradient := Gradient.new()
+	gradient.set_color(0, Palette.WALNUT_RAISED)
+	gradient.set_color(1, Color(Palette.WALNUT_RAISED, 0.0))
+	var texture := GradientTexture2D.new()
+	texture.gradient = gradient
+	texture.fill_from = Vector2(0, 0)
+	texture.fill_to = Vector2(0, 1)
+	texture.width = 4
+	texture.height = int(LOG_FADE)
+	_log_fade.texture = texture
+	_log_fade.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_log_fade.stretch_mode = TextureRect.STRETCH_SCALE
+	_log_fade.custom_minimum_size.y = LOG_FADE
+	_log_fade.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_log_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_log_fade.visible = false
+	log_box.add_child(_log_fade)
+	log_column.add_child(log_box)
 	return log_panel
 
 
@@ -245,7 +283,10 @@ func _right_column() -> VBoxContainer:
 	content.add_child(penalty_tag)
 	content.add_child(Ui.rule(Palette.RULE_SOFT))
 	content.add_child(_taken_line(PLAYER))
-	content.add_child(Ui.artifact_chips(game.artifacts(PLAYER)))
+	var chips := Ui.artifact_chips(game.artifacts(PLAYER))
+	for i in game.artifacts(PLAYER).size():
+		_artifact_chips[PLAYER][game.artifacts(PLAYER)[i]] = chips.get_child(i)
+	content.add_child(chips)
 	column.add_child(panel)
 	column.add_child(_desk_panel())
 	redraw_button = Ui.button("Redraw")
@@ -541,8 +582,9 @@ func sync_penalties() -> void:
 
 
 ## The opponent's hand as the player may see it. Returns the faces just revealed.
-func sync_opponent_hand() -> Array[CardView]:
-	return opponent_hand.show_hand(game.visible_opponent_hand(), game.hidden_card_count())
+## `hold_text`: see OpponentHand.show_hand.
+func sync_opponent_hand(hold_text: bool = false) -> Array[CardView]:
+	return opponent_hand.show_hand(game.visible_opponent_hand(), game.hidden_card_count(), hold_text)
 
 
 func set_hint(text: String, color: Color, title: String) -> void:
@@ -590,3 +632,17 @@ func _scroll_log_down() -> void:
 	if not is_instance_valid(log_scroll):
 		return
 	log_scroll.scroll_vertical = int(log_scroll.get_v_scroll_bar().max_value)
+	_update_log_fade()
+
+
+func _update_log_fade() -> void:
+	_log_fade.visible = log_scroll.scroll_vertical > 0
+
+
+## The artifact just added points: its chip pops and glows in `side`'s panel.
+func flash_artifact(side: int, artifact_id: String) -> void:
+	var chip: Control = _artifact_chips[side].get(artifact_id)
+	if chip == null:
+		return
+	Feel.pop(chip, 1.15, "pop")
+	Feel.glow(chip)

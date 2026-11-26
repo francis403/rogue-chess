@@ -52,7 +52,7 @@ Rules of thumb:
 | `card_hover` | pointer over an interactive card | `card_view.gd` `_set_hover(true)` (only when `is_interactive`) |
 | `card_select` | card selected in hand | `match_screen.gd` `press_card()` after `_selected_card = card_index` |
 | `card_play` | `card_played` event | `match_fx.gd` `apply()` → `"card_played"` branch (both sides) |
-| `card_draw` | `draw` events (once per batch, player side) | `match_fx.gd` `apply()` after the loop, where `draws[PLAYER] > 0` |
+| `card_draw` | `draw` events (once per card, player side, as each card deals in) and each Scout reveal flip | `card_view.gd` deal-in tween; `match_fx.gd` `_flip_up()` |
 | `card_shuffle` | `shuffle` event | `match_fx.gd` `apply()` → `"shuffle"` |
 | `card_discard` | `discard` event / redraw | `match_fx.gd` `apply()` → add a `"discard"` branch (player side) |
 | `reward_reveal` | reward cards appear | `reward_screen.gd` `_ready()` |
@@ -75,7 +75,7 @@ Rules of thumb:
 | `promotion` | `promotion` event | `_animate_promotion()` |
 | `check` | `check` event | `_animate_check()` |
 | `escape` | `escape` event | `match_fx.gd` `apply()` → `"escape"` / `_on_escape()` |
-| `check_stay` | `escape_declined` (a side stays in check instead of escaping): a short, low, held minor-second, unresolved | `_apply()` → `"escape_declined"`; guard with `Sfx.has_sound("check_stay")` and fall back to `ui_cancel` |
+| `check_stay` | `escape_declined` (a side stays in check instead of escaping): a short, low, held minor-second, unresolved | `_apply()` → `"escape_declined"`; guard with `Sfx.has_sound("check_stay")` and fall back to `turn_opponent` (not `ui_cancel`, which means "you cancelled") |
 
 ## Score, energy, turns
 

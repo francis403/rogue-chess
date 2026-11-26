@@ -65,25 +65,28 @@ func _side_panel() -> PanelContainer:
 	_stops_scroll.add_child(_detail)
 	holder.add_child(_stops_scroll)
 	holder.resized.connect(_fit_stops)
-	_detail.resized.connect(_fit_stops)
+	_detail.minimum_size_changed.connect(_fit_stops)
 	column.add_child(holder)
 	column.add_child(_legend())
 	return panel
 
 
 ## The stops' window shows as many whole cards (and the eyebrow) as its room
-## holds; the scroll bar says there are more.
+## holds; the scroll bar says there are more. Measured from the cards' minimum
+## heights, not their laid-out rects: right after _show_detail() rebuilds the
+## list those are not sorted yet (a stale rect cut the first card in half).
 func _fit_stops() -> void:
 	var holder := _stops_scroll.get_parent() as Control
 	var room := holder.size.y
+	var separation := _detail.get_theme_constant("separation")
+	var top := 0.0
 	var bottom := 0.0
 	for child: Control in _detail.get_children():
-		if child.is_queued_for_deletion():
-			continue
-		var end := child.position.y + child.size.y
+		var end := top + child.get_combined_minimum_size().y
 		if end > room + 0.5:
 			break
 		bottom = end
+		top = end + separation
 	_stops_scroll.offset_bottom = bottom if bottom > 0.0 else room
 
 
@@ -149,8 +152,8 @@ func _show_detail(node_id: String) -> void:
 	Ui.clear(_detail)
 	if node_id == "":
 		_show_next_stops()
-		return
-	_detail.add_child(_node_card(node_id, true))
+	else:
+		_detail.add_child(_node_card(node_id, true))
 
 
 ## With nothing hovered: a compact card for each reachable node.

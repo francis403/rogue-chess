@@ -14,6 +14,17 @@ Output: `assets/audio/sfx/<id>.wav` and `assets/audio/music/<id>.wav`, all mono,
 
 **Variants**: sounds that play many times a minute (`ui_hover`, `ui_click`, `card_draw`, `card_hover`, `piece_pickup`, `piece_move`, `piece_land_light/medium/heavy`, `capture`, `capture_against`) are rendered 3 times: `<id>.wav`, `<id>_2.wav`, `<id>_3.wav`. The function takes `v` (0, 1, 2), which changes its seeds and nudges pitch (×1, ×0.95, ×1.055) and decay. The list is `VARIANTS` in `generate.py`; the count must match `audio.sounds[id].variants` in `config/ux.json` (`check.py` fails if a configured variant file is missing). `Sfx.play(id)` picks one at random and never the same one twice in a row.
 
+## Listening (audition)
+
+Measurements can't tell how the mix sounds. To hear every sound in order:
+
+```sh
+/Applications/Godot.app/Contents/MacOS/Godot --path . res://tools/audio/audition.tscn                 # every sound, then 12 s of each music loop
+/Applications/Godot.app/Contents/MacOS/Godot --path . res://tools/audio/audition.tscn -- capture check  # only these ids
+```
+
+It plays each id of `config/ux.json` → `audio.sounds` once (a random variant, no pitch jitter), waits for it to end plus 0.6 s, then plays 12 s of each `audio.music` loop. The id, its position, its `db` and variant count are shown in the window and printed. Space replays the current sound, Right skips ahead, Esc stops. Volumes are the game's defaults (Settings points at a temp file of the process; `user://settings.json` is never written). To change a level, edit `audio.sounds.<id>.db` and run it again: no regeneration needed.
+
 ## Layout of generate.py
 
 - **DSP helpers**: envelopes (`env_perc`, `env_swell`, `fade`), `noise`, modal/additive `partials`, `glide`, a zero-delay state-variable filter `svf` (lp/bp/hp, with sweeps), `soft_clip`, a small Freeverb-style `reverb`, and `finish()` (DC/rumble high-pass, silent-tail trim, click-free fades, loudness match, peak cap at -1 dBFS).

@@ -16,16 +16,23 @@ func _ready() -> void:
 	var run := Game.run
 	var body := Ui.frame(self, "New run · step 2", "Choose your artifacts",
 		"Artifacts are passive and last the whole run. Pick up to %d, or none." % run.max_starting_artifacts())
-	# One wide row per artifact (no half-empty tiles); two columns only past ARTIFACT_LIST_MAX.
-	var grid := GridContainer.new()
-	grid.columns = 1 if run.available_artifacts().size() <= Metrics.ARTIFACT_LIST_MAX else 2
-	grid.add_theme_constant_override("h_separation", Metrics.L)
-	grid.add_theme_constant_override("v_separation", Metrics.M)
-	for artifact in run.available_artifacts():
-		grid.add_child(_artifact_tile(artifact))
-	# Tiles, status, the counter and Continue sit together in the middle.
-	var block := Ui.centre_block(body, Metrics.M)
-	block.add_child(Ui.centered(grid))
+	# One wide row per artifact (no half-empty tiles); past ARTIFACT_LIST_MAX they
+	# pair up, and an odd last tile sits centred under the pairs.
+	var artifacts := run.available_artifacts()
+	var per_row := 1 if artifacts.size() <= Metrics.ARTIFACT_LIST_MAX else 2
+	var tile_size := Metrics.ARTIFACT_TILE if per_row == 1 else Metrics.ARTIFACT_TILE_PAIRED
+	var list := Ui.vbox(Metrics.M)
+	var row: HBoxContainer
+	for artifact in artifacts:
+		if row == null or row.get_child_count() == per_row:
+			row = Ui.hbox(Metrics.L)
+			row.alignment = BoxContainer.ALIGNMENT_CENTER
+			list.add_child(row)
+		row.add_child(_artifact_tile(artifact, tile_size))
+	# Tiles, status, the counter and Continue sit together right under the
+	# header (centring them left a dead band under the subtitle).
+	var block := Ui.top_block(body, Metrics.M)
+	block.add_child(Ui.centered(list))
 	_status = Ui.status_label()
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	block.add_child(_status)
@@ -51,10 +58,10 @@ func _unhandled_input(event: InputEvent) -> void:
 ## Emblem | name, rule | number key. Chosen: tinted face, brass border, filled
 ## "CHOSEN" chip pinned to the tile's top-right corner (the same place on every
 ## tile) and a lit emblem (a sunk emblem when not chosen).
-func _artifact_tile(artifact: Dictionary) -> SelectTile:
+func _artifact_tile(artifact: Dictionary, tile_size: Vector2) -> SelectTile:
 	var index := _order.size()
 	var tile := SelectTile.new()
-	tile.custom_minimum_size = Metrics.ARTIFACT_TILE
+	tile.custom_minimum_size = tile_size
 	tile.padding = Metrics.L
 	var row := Ui.hbox(Metrics.L)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -68,10 +75,12 @@ func _artifact_tile(artifact: Dictionary) -> SelectTile:
 	column.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(column)
 	column.add_child(Ui.label(artifact["name"], "H2"))
-	column.add_child(Ui.wrapped(artifact["desc"], "Body", Metrics.ARTIFACT_TILE.x - Metrics.EMBLEM - Metrics.CHIP_COLUMN - Metrics.XXXL - Metrics.L))
-	# The right edge: room for the chip (top) and the key cap (bottom).
+	# The rule runs to the key cap: the chip only shares the name's line.
+	var edge_width := Metrics.KEY_CAP + Metrics.S
+	column.add_child(Ui.wrapped(artifact["desc"], "Body", tile_size.x - 2 * Metrics.L - Metrics.EMBLEM - 2 * Metrics.L - edge_width))
+	# The right edge: room for the key cap (bottom); the chip pins top-right over it.
 	var edge := Control.new()
-	edge.custom_minimum_size.x = Metrics.CHIP_COLUMN - Metrics.XXXL
+	edge.custom_minimum_size.x = edge_width
 	edge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(edge)
 	var key := Ui.key_cap(str(index + 1))

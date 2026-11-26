@@ -27,6 +27,10 @@ const MAX_LIST_HEIGHT := 380.0
 const OPEN_SCALE := 0.94
 ## Seconds between two items dealt in on open (unscaled, like Feel.reveal).
 const DEAL_STAGGER := 0.025
+## Room kept under a card for its "×N" tab (a Strong figure on a 1 px padded
+## chip), and the gap between the card and the tab.
+const BADGE_ROOM := 26.0
+const BADGE_GAP := 2.0
 
 
 func _ready() -> void:
@@ -45,6 +49,8 @@ func _ready() -> void:
 	centre.add_child(_panel)
 	_body = Ui.vbox(16)
 	_panel.add_child(_body)
+	# The panel has no size until layout: keep the scale pivot centred whenever it resizes.
+	_panel.resized.connect(_centre_pivot)
 	_release_focus = A11y.trap_focus(self)
 	Sfx.play("ui_open")
 	_animate(true)
@@ -66,10 +72,13 @@ func _animate(opening: bool) -> Tween:
 	if not Motion.reduced():
 		if opening:
 			_panel.scale = Vector2.ONE * OPEN_SCALE
-		# The panel's size is known after layout: centre the pivot then.
-		tween.tween_callback(func() -> void: _panel.pivot_offset = _panel.size / 2.0)
+		_centre_pivot()
 		tween.tween_property(_panel, "scale", Vector2.ONE if opening else Vector2.ONE * OPEN_SCALE, duration)
 	return tween
+
+
+func _centre_pivot() -> void:
+	_panel.pivot_offset = _panel.size / 2.0
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -104,9 +113,10 @@ func show_cards(title: String, cards: Array, on_pick: Callable = Callable(), sub
 	_header(title, subtitle if subtitle != "" else "%d cards" % cards.size())
 	var groups := group_cards(cards)
 	var grid := GridContainer.new()
-	grid.columns = clampi(groups.size(), 1, CARD_COLUMNS)
+	grid.columns = balanced_columns(groups.size(), CARD_COLUMNS)
 	grid.add_theme_constant_override("h_separation", 12)
-	grid.add_theme_constant_override("v_separation", 20)
+	# Each card's holder already keeps BADGE_ROOM under it.
+	grid.add_theme_constant_override("v_separation", Metrics.XS)
 	for group: Array in groups:
 		var card: CardData = group[0]
 		var view := CardView.create(card)
@@ -121,21 +131,24 @@ func show_cards(title: String, cards: Array, on_pick: Callable = Callable(), sub
 				on_pick.call(card)
 			view.pressed.connect(pick)
 			_make_pickable(view, pick)
-		# The holder draws the focus ring (CardView has no focus style of its own).
-		var holder := Control.new()
-		holder.custom_minimum_size = view.custom_minimum_size
-		holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		holder.add_child(view)
-		A11y.ring_on_focus(holder, view)
 		if group.size() > 1:
 			view.tooltip_text = "%d copies · %s" % [group.size(), view.tooltip_text]
-			var badge := count_badge(group.size())
-			holder.add_child(badge)
-			ItemOverlay.pin_badge(badge)
+		# The holder draws the focus ring (CardView has no focus style of its own).
+		var holder := badged(view, group.size())
+		A11y.ring_on_focus(holder, view)
 		grid.add_child(holder)
 	_body.add_child(_scrolling(grid))
 	_footer()
 	Feel.reveal(grid.get_children(), DEAL_STAGGER)
+
+
+## Columns for `count` items, at most `most` a row, so the rows are even
+## (8 → 4 + 4, 7 → 4 + 3) instead of leaving an orphan on the last row.
+static func balanced_columns(count: int, most: int) -> int:
+	if count <= 0:
+		return 1
+	var rows := ceili(float(count) / most)
+	return ceili(float(count) / rows)
 
 
 ## Identical cards (same type and upgrade) grouped: an array of arrays of
@@ -155,14 +168,25 @@ static func group_cards(cards: Array) -> Array:
 	return result
 
 
-## Pins a count badge as a tab centred on its holder's bottom edge, hanging
-## mostly below the card (anchored, so it centres once its text is laid out).
-static func pin_badge(badge: Control) -> void:
-	badge.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	badge.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	badge.grow_vertical = Control.GROW_DIRECTION_END
-	badge.offset_top = -Metrics.S
-	badge.offset_bottom = -Metrics.S
+## A card (`view`, at its minimum size) in a holder that keeps BADGE_ROOM free
+## under it; with `count` > 1 a "×N" tab sits centred in that room, BADGE_GAP
+## below the card, so it never covers the card's name or border (deck and
+## collection overlays, run end). Every card gets the room, so rows line up.
+static func badged(view: Control, count: int) -> Control:
+	var holder := Control.new()
+	holder.custom_minimum_size = view.custom_minimum_size + Vector2(0, BADGE_ROOM)
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	holder.add_child(view)
+	if count > 1:
+		var badge := count_badge(count)
+		holder.add_child(badge)
+		# Anchored at the top centre, so it centres once its text is laid out.
+		badge.set_anchors_preset(Control.PRESET_CENTER_TOP)
+		badge.grow_horizontal = Control.GROW_DIRECTION_BOTH
+		badge.grow_vertical = Control.GROW_DIRECTION_END
+		badge.offset_top = view.custom_minimum_size.y + BADGE_GAP
+		badge.offset_bottom = badge.offset_top
+	return holder
 
 
 ## A small "×N" chip: copies of the same card or piece.

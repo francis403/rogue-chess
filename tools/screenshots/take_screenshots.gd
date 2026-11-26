@@ -1,10 +1,12 @@
 extends Node
 ## Drives runs through every screen and saves PNGs:
-##   docs/screenshots/NN_*.png          every screen at 1280x720 (the base canvas)
+##   docs/screenshots/NN_*.png          every screen at 1280x720 (the base canvas); 42-46
+##                                      are Deep Vision (artifact select, its match, Scout,
+##                                      the settled reveal)
 ##   docs/screenshots/1080p/NN_*.png    a subset as a 1920x1080 window shows it
 ##   docs/screenshots/16x10/NN_*.png    the same subset in a 1280x800 window (aspect expand)
 ##   docs/screenshots/frames/*_NN.png   motion frame sequences (capture, explosion, card play,
-##                                      turn banner, settings, map travel, coaching accept,
+##                                      turn banner, Scout reveal, settings, map travel, coaching accept,
 ##                                      deck overlay, run-end victory)
 ## Uses a temp MetaStore, log folder and settings file (normal animation speed) in a
 ## folder of this process (user://screenshot_tmp/p<pid>/), never user://meta.json or
@@ -22,6 +24,9 @@ const TEMP_PARENT := "user://screenshot_tmp/"
 const BASE_WINDOW := Vector2i(1280, 720)
 ## The run end plays its payoff (count-up, unlock deal-in) for about 2.5 s at normal speed.
 const RUN_END_SETTLE := 3.0
+## A new unlock opens with its unlock_fanfare at most 0.9 s after the last figure
+## (about 2.9 s in); its items deal in and the panel glows for about this long after.
+const UNLOCK_SETTLE := 0.7
 ## Extra window sizes: output subfolder -> window size.
 const EXTRA_WINDOWS := {"1080p": Vector2i(1920, 1080), "16x10": Vector2i(1280, 800)}
 
@@ -52,6 +57,7 @@ func _ready() -> void:
 	await _second_run()
 	await _third_run()
 	await _extras_run()
+	await _deep_vision_run()
 	await _moments.motion_frames()
 	await _menu_frames()
 	await _close_stage()
@@ -77,6 +83,7 @@ func _large_text_pass() -> void:
 	await _second_run()
 	await _third_run()
 	await _extras_run()
+	await _deep_vision_run()
 	await _close_stage()
 	_remove_dir(_temp_dir)
 	DirAccess.remove_absolute(TEMP_PARENT)  # only once empty
@@ -112,6 +119,20 @@ func _shot(shot_name: String, settle: float = ShotStage.SETTLE) -> void:
 
 func _screen() -> Control:
 	return _stage.screen()
+
+
+## Opens the run end of a finished run and shoots it once its payoff is over:
+## after the unlock opens (caught on its unlock_fanfare) when the run unlocked
+## something new, else after the figures have counted up.
+func _show_run_end(shot_name: String) -> void:
+	var is_new: bool = Game.run.unlock_result().get("is_new", false)
+	var fanfare := _stage.listen("unlock_fanfare") if is_new else {}
+	Game.show_phase()
+	if is_new:
+		await _stage.heard(fanfare, 10.0)
+		await _shot(shot_name, UNLOCK_SETTLE)
+	else:
+		await _shot(shot_name, RUN_END_SETTLE)
 
 
 # --- Base pass (1280x720) --------------------------------------------------------
@@ -170,8 +191,7 @@ func _first_run() -> void:
 	await _stage.wait_idle()
 	await _shot("match_boss")
 	Game.run.finish_match({"winner": 0, "reason": "king", "scores": [6, 2]})
-	Game.show_phase()
-	await _shot("run_end_victory", RUN_END_SETTLE)
+	await _show_run_end("run_end_victory")
 
 
 func _second_run() -> void:
@@ -189,8 +209,7 @@ func _second_run() -> void:
 	await _moments.play_first_legal()
 	await _shot("match_fire_burning")
 	Game.run.finish_match({"winner": 1, "reason": "score", "scores": [3, 10]})
-	Game.show_phase()
-	await _shot("run_end_defeat", RUN_END_SETTLE)
+	await _show_run_end("run_end_defeat")
 
 
 func _third_run() -> void:
@@ -245,6 +264,26 @@ func _extras_run() -> void:
 	await _stage.key(KEY_F1)
 
 
+## Deep Vision (foresight), after every artifact is unlocked: chosen on artifact
+## select; a real match where it shows the opponent's whole hand (default 1
+## hidden card − 1); a crafted match with two of five opponent cards still hidden,
+## then a Scout turning them face up.
+func _deep_vision_run() -> void:
+	_unlock_all_artifacts()
+	Game.new_run(55)
+	Game.run.choose_piece_set("standard")
+	Game.show_phase()
+	_screen()._toggle("foresight")
+	await _shot("artifact_select_deep_vision")
+	_screen()._continue()
+	_go(Game.run.available_nodes()[0])
+	await _stage.wait(0.3)
+	_screen()._start_match()
+	await _stage.wait_idle()
+	await _shot("match_deep_vision")
+	await _moments.deep_vision_scout_scene()
+
+
 ## Hovers the player's hand card `index` (the card lifts and its tooltip text shows).
 func _hover_card(index: int) -> void:
 	var views := _screen().find_children("*", "CardView", true, false).filter(
@@ -285,8 +324,7 @@ func _subset_run() -> void:
 	Game.run.choose_node("L3")
 	Game.run.build_match_setup(Game.run.default_roster())
 	Game.run.finish_match({"winner": 1, "reason": "score", "scores": [3, 10]})
-	Game.show_phase()
-	await _shot("run_end", RUN_END_SETTLE)
+	await _show_run_end("run_end")
 	await _subset_menus()
 
 
@@ -316,6 +354,7 @@ func _subset_menus() -> void:
 	await _stage.wait(ShotStage.SETTLE)
 	if await _pick_up_with_keyboard():
 		await _shot("roster_keyboard_cursor", 0.4)
+	await _deep_vision_run()
 
 
 ## On the roster: Enter on a benched collection row (else the king's row) picks the
@@ -379,7 +418,9 @@ func _menu_frames() -> void:
 	Game.run.build_match_setup(Game.run.default_roster())
 	Game.run.finish_match({"winner": 0, "reason": "king", "scores": [6, 2]})
 	Game.show_phase()
-	await _stage.frames("run_end_victory", 8, 0.35, FRAMES_DIR)
+	# 0 to 4.2 s: the burst, the row, the count-up with the seal charging, then
+	# the unlock opening with its fanfare (about 2.9 s).
+	await _stage.frames("run_end_victory", 8, 0.6, FRAMES_DIR)
 
 
 # --- Run helpers ---------------------------------------------------------------

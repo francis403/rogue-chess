@@ -57,6 +57,8 @@ func _ready() -> void:
 	_panel = panel
 	centre.add_child(panel)
 	panel.add_child(_content())
+	# The panel has no size until layout: keep the scale pivot centred whenever it resizes.
+	panel.resized.connect(_centre_pivot)
 	_preview_timer = Timer.new()
 	_preview_timer.one_shot = true
 	_preview_timer.wait_time = PREVIEW_DELAY
@@ -86,8 +88,11 @@ func _animate_open(scrim: Control) -> void:
 	tween.tween_property(scrim, "modulate:a", 1.0, duration * 0.6)
 	if not Motion.reduced():
 		_panel.scale = Vector2.ONE * ItemOverlay.OPEN_SCALE
-		tween.tween_callback(func() -> void: _panel.pivot_offset = _panel.size / 2.0)
 		tween.tween_property(_panel, "scale", Vector2.ONE, duration)
+
+
+func _centre_pivot() -> void:
+	_panel.pivot_offset = _panel.size / 2.0
 
 
 func _content() -> VBoxContainer:

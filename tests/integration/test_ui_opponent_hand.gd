@@ -68,6 +68,12 @@ func _face_uids() -> Array:
 	return _row().faces().map(func(face: CardView) -> int: return face.card.uid)
 
 
+## The names line as plain " · "-joined text (it breaks its own lines and uses
+## non-breaking spaces).
+func _names_text() -> String:
+	return _row().names_line.text.replace("\n", " · ").replace("\u00a0", " ")
+
+
 ## The row shows what the engine lets the player see, and nothing else.
 func _assert_row_matches_engine(context: String) -> void:
 	var game := ui.game()
@@ -150,6 +156,12 @@ func test_a_scout_from_the_hand_flips_two_backs() -> void:
 		assert_true(_face_uids().has(uid), "the cards already shown stay shown")
 	_assert_row_matches_engine("after a Scout")
 	assert_true(_log_text().contains("You scouted 2 cards"), "the log says what the Scout did")
+	var revealed: Array = _row().faces().filter(func(face: CardView) -> bool: return not faces_before.has(face.card.uid))
+	assert_true(_log_text().contains("Revealed: " + " · ".join(revealed.map(func(face: CardView) -> String: return face.card.display_name()))),
+		"the log names the revealed cards (no mouse needed)")
+	for face: CardView in _row().faces():
+		assert_eq(face.flip, 1.0, "every face has finished turning over")
+		assert_eq(face.modulate.a, 1.0)
 
 
 func test_a_scout_never_reveals_more_than_is_hidden_and_is_refused_after() -> void:
@@ -317,10 +329,10 @@ func test_shown_card_names_are_in_text_and_the_log_reads_in_turn_order() -> void
 	await _show(["pawn", "move", "move", "move", "move"], 2)
 	var game := ui.game()
 	var expected := " · ".join(game.visible_opponent_hand().map(func(card: CardData) -> String: return card.display_name()))
-	assert_eq(_row().names_line.text, expected, "the shown cards are named without a mouse")
+	assert_eq(_names_text(), expected, "the shown cards are named without a mouse")
 	assert_true(ui.press(ui.button("End turn", ui.screen())))
 	assert_true(await ui.wait_player_turn())
-	assert_eq(_row().names_line.text, " · ".join(game.visible_opponent_hand().map(func(card: CardData) -> String: return card.display_name())))
+	assert_eq(_names_text(), " · ".join(game.visible_opponent_hand().map(func(card: CardData) -> String: return card.display_name())))
 	var lines := _log_text().split("\n")
 	var header := lines.find("— Round 2 · Your turn —")
 	assert_gt(header, 0, "the new round is logged")
@@ -329,3 +341,98 @@ func test_shown_card_names_are_in_text_and_the_log_reads_in_turn_order() -> void
 	assert_true(opening.has("You drew 5 cards"), "the player's draw opens the new turn: %s" % [opening])
 	assert_false(opening.has("Rookie Rex drew 5 cards"), "not the opponent's")
 	assert_eq(lines.slice(0, 3), ["Rookie Rex drew 5 cards", "— Round 1 · Your turn —", "You drew 5 cards"] as PackedStringArray, "match start")
+
+
+func test_a_swept_row_is_dealt_again_even_with_the_same_cards() -> void:
+	# A reshuffle can deal the opponent the same cards in the same order.
+	var row := OpponentHand.new()
+	add_child_autofree(row)
+	autofree(row.caption)  # the screen places these two; here they stay out of the tree
+	autofree(row.names_line)
+	var cards: Array[CardData] = [CardData.new("pawn"), CardData.new("move")]
+	row.show_hand(cards, 1)
+	row.sweep_out(0.01)
+	await get_tree().create_timer(0.1).timeout
+	row.show_hand(cards, 1)
+	await get_tree().process_frame
+	assert_eq(row.get_child_count(), 3)
+	for view: Control in row.get_children():
+		assert_false(view.is_queued_for_deletion(), "a fresh card, not the swept one")
+		assert_eq(view.modulate.a, 1.0, "visible again")
+
+
+
+func test_the_scout_reveal_text_waits_for_the_flips() -> void:
+	Settings.set_value("anim_speed", "normal")  # frames to look at while the cards turn
+	await _show(["scout", "pawn", "move", "move", "move"], 2)
+	var caption_before: String = _row().caption.text
+	var names_before := _names_text()
+	var faces_before := _row().faces().size()
+	var separation := _row().get_theme_constant("separation")
+	var xs: Array = _row().get_children().map(func(card: Control) -> float: return card.position.x)
+	ui.click_card(ui.hand_index("scout"))
+	assert_true(await ui.until(func() -> bool: return _row().faces().size() == faces_before + 2), "the row turned the backs")
+	assert_eq(_row().caption.text, caption_before, "the caption still counts the backs while they turn")
+	assert_eq(_names_text(), names_before, "the names line doesn't name them yet")
+	assert_false(_log_text().contains("Revealed:"), "nor does the log")
+	assert_eq(_row().get_theme_constant("separation"), separation, "the row's spacing holds")
+	assert_eq(_row().get_children().map(func(card: Control) -> float: return card.position.x), xs, "no card moves")
+	assert_true(await ui.wait_match_idle())
+	assert_eq(_row().caption.text, "all shown", "the caption tells the result once the cards have turned")
+	assert_eq(_names_text(), " · ".join(ui.game().visible_opponent_hand().map(func(card: CardData) -> String: return card.display_name())))
+	assert_true(_log_text().contains("Revealed:"))
+
+
+func test_the_names_line_never_ends_a_line_on_a_separator() -> void:
+	Settings.set_value("large_text", true)
+	assert_true(await ui.show_crafted_match(PLAYER_PIECES, OPPONENT_PIECES, ["pawn", "move", "pawn", "move", "pawn"],
+		["bishop", "knight", "rook", "move", "pawn"], 0))
+	await ui.frames(2)
+	var names := _row().names_line
+	var font := names.get_theme_font("font")
+	var font_size := names.get_theme_font_size("font_size")
+	var lines := names.text.split("\n")
+	assert_gt(lines.size(), 1, "five names take two lines at Large text")
+	for line in lines:
+		assert_false(line.strip_edges().ends_with("·"), "no dangling separator: %s" % line)
+		assert_false(line.strip_edges().begins_with("·"), "no leading separator: %s" % line)
+		assert_lte(font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x, float(OpponentHand.WIDTH), "the line fits")
+	assert_eq(names.get_line_count(), lines.size(), "the label adds no breaks of its own")
+	# The text size changes live: the lines are broken again.
+	Settings.set_value("large_text", false)
+	await ui.frames(2)
+	assert_eq(names.text.split("\n").size(), 1, "one line at normal size")
+
+
+func test_deep_vision_point_is_attributed_when_it_scores() -> void:
+	# The player holds Deep Vision; the opponent's rook takes a pawn: +1 for the
+	# pawn and +1 Deep Vision, named in the floats, the log and by the chip.
+	Game.match_setup = {
+		"seed": 5,
+		"holes": [] as Array[Vector2i],
+		"player": {"roster": UiDriver._roster([["king", 2, 0], ["pawn", 3, 3]]), "deck": UiDriver._cards(["move", "move", "move", "move", "move"]),
+			"artifacts": ["foresight"] as Array[String]},
+		"opponent": {"id": "easy", "name": "Rookie Rex", "difficulty": "Easy", "search_depth": 1, "random_chance": 0.0,
+			"roster": UiDriver._roster([["king", 0, 5], ["rook", 3, 5]]), "deck": UiDriver._cards(["rook", "rook", "rook", "rook", "rook"]),
+			"artifacts": [] as Array[String]},
+	}
+	ui.main.show_screen("MATCH")
+	assert_true(await ui.wait_match_idle())
+	var scripted := ScriptedAI.new(O, 1, 0.0, RandomNumberGenerator.new())
+	scripted.rook_move = [Vector2i(3, 5), Vector2i(3, 3)]
+	ui.screen()._ai = scripted
+	var chip: Control = ui.screen()._view._artifact_chips[ChessMatch.PLAYER]["foresight"]
+	assert_true(ui.press(ui.button("End turn", ui.screen())))
+	assert_true(await ui.until(func() -> bool: return ui.game().current_side() == O))
+	var floats := {}
+	var chip_lit := false
+	while not (ui.game().current_side() == ChessMatch.PLAYER and ui.match_idle()):
+		for label: Label in ui.find_all(ui.screen()._view.board, Label):
+			floats[label.text] = true
+		chip_lit = chip_lit or chip.modulate.r > 1.0
+		await ui.frames(1)
+	assert_eq(ui.game().score(O), 2, "the pawn's point and Deep Vision's")
+	assert_true(floats.has("+1") and floats.has("+1 Deep Vision"), "two floats: %s" % [floats.keys()])
+	assert_true(_log_text().contains("Pawn captured on d4 (+2, incl. +1 Deep Vision)"), _log_text())
+	assert_true(chip_lit, "the Deep Vision chip glows")
+

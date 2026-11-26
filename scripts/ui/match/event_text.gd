@@ -22,8 +22,32 @@ static func reason_text(reason: String, player_won: bool) -> String:
 	return reason
 
 
-## names: [player name, opponent name].
-static func describe(event: Dictionary, names: Array) -> String:
+## The artifact points inside a capture's (or burn-out's) `points`, as
+## [{"id": artifact id, "points": n}]: the credited side's Trophy Case, then the
+## player's Deep Vision penalty when a player piece is taken. The engine folds
+## them into `points` (D27, D68); `artifacts` is [player's ids, opponent's ids].
+static func bonuses(event: Dictionary, artifacts: Array) -> Array[Dictionary]:
+	var found: Array[Dictionary] = []
+	if not event["type"] in ["capture", "burn_out"] or (artifacts[0] as Array).is_empty() and (artifacts[1] as Array).is_empty():
+		return found
+	var table: Dictionary = GameConfig.data("artifacts")["artifacts"]
+	if (artifacts[int(event["by_side"])] as Array).has("capture_bonus"):
+		found.append({"id": "capture_bonus", "points": int(table["capture_bonus"]["amount"])})
+	if int(event["side"]) == ChessMatch.PLAYER and (artifacts[ChessMatch.PLAYER] as Array).has("foresight"):
+		found.append({"id": "foresight", "points": int(table["foresight"]["penalty"])})
+	return found
+
+
+## ", incl. +1 Trophy Case" for the artifact points in a capture, else "".
+static func bonus_note(parts: Array[Dictionary]) -> String:
+	if parts.is_empty():
+		return ""
+	return ", incl. %s" % ", ".join(parts.map(func(part: Dictionary) -> String: return "+%d %s" % [part["points"], Ui.artifact_name(part["id"])]))
+
+
+## names: [player name, opponent name]; artifacts: [player's ids, opponent's ids]
+## (names the artifact points in a capture line).
+static func describe(event: Dictionary, names: Array, artifacts: Array = [[], []]) -> String:
 	var who: String = names[int(event.get("side", 0))] if event.has("side") else ""
 	match event["type"]:
 		"turn_start":
@@ -34,7 +58,10 @@ static func describe(event: Dictionary, names: Array) -> String:
 			return "%s %s → %s" % [Ui.piece_name(event["piece_type"]), square_name(event["from"]), square_name(event["to"])]
 		"capture":
 			var verb := "exploded" if event["cause"] == "explosion" else "captured"
-			return "%s %s on %s (+%d)" % [Ui.piece_name(event["piece_type"]), verb, square_name(event["square"]), event["points"]]
+			var line := "%s %s on %s" % [Ui.piece_name(event["piece_type"]), verb, square_name(event["square"])]
+			if event["points"] == 0:  # a king is worth nothing: no "(+0)"
+				return line
+			return "%s (+%d%s)" % [line, event["points"], bonus_note(bonuses(event, artifacts))]
 		"shield_block":
 			return "Shield on %s blocked the %s" % [square_name(event["square"]), "blast" if event["cause"] == "explosion" else "capture"]
 		"explosion":
@@ -42,7 +69,7 @@ static func describe(event: Dictionary, names: Array) -> String:
 		"ignite":
 			return "Piece on %s ignites (%d turns)" % [square_name(event["square"]), event["turns_left"]]
 		"burn_out":
-			return "%s on %s burned out (+%d to %s)" % [Ui.piece_name(event["piece_type"]), square_name(event["square"]), event["points"], names[int(event["by_side"])]]
+			return "%s on %s burned out (+%d to %s%s)" % [Ui.piece_name(event["piece_type"]), square_name(event["square"]), event["points"], names[int(event["by_side"])], bonus_note(bonuses(event, artifacts))]
 		"promotion":
 			return "Pawn promoted to Queen on %s" % square_name(event["square"])
 		"redraw":

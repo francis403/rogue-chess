@@ -5,6 +5,7 @@ extends GutTest
 
 const UiDriver := preload("res://tests/integration/ui_helpers/ui_driver.gd")
 const REAL_META_PATH := "user://meta.json"
+const RunEndScreen := preload("res://scripts/ui/screens/run_end_screen.gd")
 
 var ui: UiDriver
 
@@ -109,6 +110,17 @@ func test_losing_by_skipping_every_turn_ends_the_run_with_an_artifact_unlock() -
 	assert_true(ui.press(button))
 	ui.force_press(button)  # double press: finish_match must not run twice
 	assert_true(await ui.wait_screen("RUN_END"))
+	# The unlock opens soon after the figures (motion "unlock_hold"), not when the long
+	# run stinger rings out; its fanfare takes over from the stinger.
+	var run_end: Variant = ui.screen()
+	var stinger_left := Sfx.stinger_time_left()
+	var figures_done := Settings.time(Motion.seconds("reveal") + Motion.seconds("unlock_delay")
+		+ Motion.seconds("run_count_stagger") * 4 + Motion.seconds("run_count_up"))
+	var limit := figures_done + Motion.time("unlock_hold") + Settings.time(Motion.seconds("reveal")) + 0.3
+	assert_gt(stinger_left, limit, "the run stinger outlasts the hold, so the hold is what's tested")
+	assert_true(await ui.until(func() -> bool: return not is_instance_valid(run_end._seal), int(limit * 1000.0)),
+		"the seal opens within the unlock_hold motion time of the last figure")
+	assert_gt(Sfx.stinger_time_left(), 0.0, "the unlock fanfare sounds")
 	var unlock := Game.run.unlock_result()
 	assert_eq(unlock.get("kind"), "artifact")
 	assert_true(unlock.get("is_new", false))
@@ -121,6 +133,7 @@ func test_losing_by_skipping_every_turn_ends_the_run_with_an_artifact_unlock() -
 	# The next run now has the artifact step with that one artifact.
 	assert_true(ui.press(ui.button("Start new run")))
 	assert_true(await ui.wait_screen("SET_SELECT"))
+	assert_eq(Sfx.stinger_time_left(), 0.0, "leaving the run end fades its stinger out")
 	assert_true(ui.select_tiles()[1].is_locked, "Fire is still locked after a loss")
 	ui.click(ui.select_tiles()[0])
 	assert_true(await ui.wait_screen("ARTIFACT_SELECT"))
