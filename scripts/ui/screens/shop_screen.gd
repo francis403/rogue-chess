@@ -2,8 +2,8 @@ extends Control
 ## Shop: buy cards and pieces, remove one card. Sold and unaffordable states are shown
 ## in words on the button, not only by its colour.
 ## Feel: a purchase plays ui_purchase, pops "Bought …" on a plate over the bought
-## item and floats the points spent up from it (inside the offer's panel, clear of
-## captions and borders), and the HUD points pop; a refusal
+## item and floats the points spent up from just above it (clear of its glyph and
+## cost coin), and the HUD points pop; a refusal
 ## plays ui_error and shakes the status line under the offers. Keyboard: Tab / arrows move between offers,
 ## Enter buys, 1-9 jump to an offer's button, Esc closes the card-removal chooser.
 ## Hierarchy: Buy is a standard (outlined) button; "Leave the shop" is the one
@@ -14,7 +14,6 @@ var _content: HBoxContainer
 var _leave: Button
 ## Offer buttons in screen order (cards, pieces, removal): the 1-9 keys and focus after a rebuild.
 var _offer_buttons: Array[Button] = []
-var _points_before: int = 0
 var _removal_column: Control
 
 
@@ -49,7 +48,6 @@ func _unhandled_input(event: InputEvent) -> void:
 func _rebuild() -> void:
 	Ui.clear(_content)
 	_offer_buttons.clear()
-	_points_before = Game.run.points
 	var offers := Game.run.shop_offers()
 	_content.add_child(_section("CARDS", _card_offers(offers["cards"])))
 	_content.add_child(_section("PIECES", _piece_offers(offers["pieces"])))
@@ -162,7 +160,7 @@ func _buy_button(offer: Dictionary, buy: Callable, item: Control) -> Button:
 
 
 static func _cant_afford(price: int) -> String:
-	return "%d pt · can't afford" % price
+	return Ui.need_points(price)
 
 
 func _item_name(offer: Dictionary) -> String:
@@ -179,15 +177,13 @@ func _open_removal() -> void:
 
 
 ## Applies a buy / removal result. `source` is the pressed button (focus stays on
-## that slot); `item` the bought card or piece row: "Bought …" pops on its centre
-## and the spent points float up from just above that plate (the status line
-## without one).
+## that slot); `item` the bought card or piece row: "Bought …" pops on its centre.
+## The spent points show under the run bar's points figure (RunHud.bump_points).
 func _apply(result: Dictionary, success_text: String, source: Control = null, item: Control = null) -> void:
 	var focus_index := _offer_buttons.find(source)
 	# Measured before the rebuild: the rebuilt offer takes the same place.
 	var anchor: Control = item if is_instance_valid(item) else _status
 	var at := Feel.centre_in(anchor, self)
-	var spent := _points_before - Game.run.points
 	_rebuild()
 	_focus_offer(maxi(focus_index, 0))
 	if not result["ok"]:
@@ -195,7 +191,5 @@ func _apply(result: Dictionary, success_text: String, source: Control = null, it
 		return
 	Sfx.play("ui_purchase")
 	_status.text = ""
-	var toast := Feel.toast(self, success_text, at)
-	if spent > 0:
-		Feel.float_text(self, "−%d pt" % spent, at - Vector2(0, toast.size.y * 0.5 + Metrics.L), Palette.BRASS)
+	Feel.toast(self, success_text, at)
 	Game.notify_changed()

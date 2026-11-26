@@ -37,11 +37,13 @@ const SETTINGS_KEY := 96
 const REWARD_CARD := Vector2(195, 273)
 const SET_TILE_WIDTH := 440
 const SET_TOKEN := 58
-## Artifact tiles are one wide row each (a list of up to ARTIFACT_LIST_MAX).
+## Artifact tiles are one wide row each (a list of up to ARTIFACT_LIST_MAX);
+## past that they pair up in two columns of narrower tiles, which together fit
+## the 1184 px between the screen margins (1280 - 2 × SCREEN_X); an odd last
+## tile is centred under the pairs.
 const ARTIFACT_TILE := Vector2(760, 96)
+const ARTIFACT_TILE_PAIRED := Vector2(576, 96)
 const ARTIFACT_LIST_MAX := 4
-## The right-hand column of an artifact tile, kept free for its CHOSEN chip and key cap.
-const CHIP_COLUMN := 128
 const EMBLEM := 64
 const KEY_CAP := 22
 ## Narrowest the deck / collection overlay gets (it hugs its content beyond that).

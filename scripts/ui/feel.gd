@@ -6,6 +6,8 @@ extends RefCounted
 ## pop, glow or travel; fades and texts stay.
 
 const FLOAT_RISE := 36.0
+## How far the spent-points plate drifts down from the run bar (spend_float).
+const SPEND_DROP := 12.0
 
 
 ## A short scale bump: "this was chosen / changed". `kind` names the pair of
@@ -66,8 +68,37 @@ static func fade_in(node: CanvasItem, duration_name: String = "fade") -> void:
 ## Text that rises and fades from `at` (local to `parent`, kept inside it
 ## horizontally); it only fades with reduced motion. `font_size` 0 keeps the H2
 ## size. `plated` sets it on the toast's opaque plate (for a float that starts
-## over art, like coaching's "−N pt"). Returns the node, which frees itself.
+## over art). Returns the node, which frees itself.
 static func float_text(parent: Control, text: String, at: Vector2, color: Color, font_size: int = 0, plated: bool = false) -> Control:
+	var node := _float_node(parent, text, color, font_size, plated)
+	_rise(node, parent, at - node.size / 2.0)
+	return node
+
+
+## Points spent ("−N pt"), plated, under the run bar's training points figure
+## (`figure`, a child of `bar`): it appears just below the bar, drifts down a
+## short way and fades, over the empty band above the screen's content. So it
+## never covers an offer's art, cost coin, ribbon or a heading, and never
+## crosses a panel border. It is top level (the bar is a container), drawn above
+## the screen. With reduced motion it only fades. Returns the node.
+static func spend_float(bar: Control, figure: Control, spent: int) -> Control:
+	var node := _float_node(bar, "−%d pt" % spent, Palette.BRASS, 0, true)
+	node.top_level = true
+	var width := bar.get_viewport_rect().size.x
+	var x := figure.get_global_rect().get_center().x - node.size.x / 2.0
+	node.position = Vector2(clampf(x, Metrics.M, maxf(width - node.size.x - Metrics.M, Metrics.M)), \
+		bar.get_global_rect().end.y + Metrics.XS)
+	var duration := Motion.time("float")
+	var tween := node.create_tween().set_parallel()
+	if not Motion.reduced():
+		tween.tween_property(node, "position:y", node.position.y + SPEND_DROP, duration) \
+			.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tween.tween_property(node, "modulate:a", 0.0, duration * 0.4).set_delay(duration * 0.6)
+	tween.chain().tween_callback(node.queue_free)
+	return node
+
+
+static func _float_node(parent: Control, text: String, color: Color, font_size: int, plated: bool) -> Control:
 	var text_label := Ui.label(text, "H2", color)
 	if font_size > 0:
 		text_label.add_theme_font_size_override("font_size", font_size)
@@ -82,16 +113,21 @@ static func float_text(parent: Control, text: String, at: Vector2, color: Color,
 	node.z_index = 20
 	parent.add_child(node)
 	node.reset_size()
-	node.position = at - node.size / 2.0
+	return node
+
+
+## Places a float at `top_left` (kept inside `parent` horizontally), then lifts and fades it.
+static func _rise(node: Control, parent: Control, top_left: Vector2) -> void:
+	node.position = top_left
 	node.position.x = clampf(node.position.x, 0.0, maxf(parent.size.x - node.size.x, 0.0))
+	var top := node.position.y - FLOAT_RISE
 	var duration := Motion.time("float")
 	var tween := node.create_tween().set_parallel()
 	if not Motion.reduced():
-		tween.tween_property(node, "position:y", node.position.y - FLOAT_RISE, duration) \
+		tween.tween_property(node, "position:y", top, duration) \
 			.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
 	tween.tween_property(node, "modulate:a", 0.0, duration * 0.4).set_delay(duration * 0.6)
 	tween.chain().tween_callback(node.queue_free)
-	return node
 
 
 ## A short message that appears at `at` (local to `parent`, centred there and

@@ -49,6 +49,13 @@ static func fix_width(node: Button, texts: Array[String]) -> void:
 	node.theme_changed.connect(fit)
 
 
+## The label of an offer the player can't pay for yet (shop and coaching):
+## the price it needs, in words. Short enough for coaching's Accept buttons, so
+## three offers still fit a 1280 px window at Large text.
+static func need_points(price: int) -> String:
+	return "Need %d pt" % price
+
+
 ## Connects a one-shot button: it disables itself on the first press, so a
 ## double click can't run the action twice.
 static func connect_once(node: Button, action: Callable) -> void:
@@ -244,6 +251,15 @@ static func centre_block(body: VBoxContainer, separation: int = Metrics.XL) -> V
 	block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.add_child(block)
 	body.add_child(spacer())
+	return block
+
+
+## A block right under a frame's header (the frame's own Metrics.XL gap), for a
+## tall list that would leave a dead band between header and list if centred.
+static func top_block(body: VBoxContainer, separation: int = Metrics.XL) -> VBoxContainer:
+	var block := vbox(separation)
+	block.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_child(block)
 	return block
 
 

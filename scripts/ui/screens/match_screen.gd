@@ -447,7 +447,8 @@ func _play_selected(to: Vector2i) -> void:
 	if play.is_empty():
 		return
 	var view := _card_views[play["card_index"]]
-	_fx.fly_card(view, _view.board.get_global_transform() * _view.board.square_centre(play["from"]))
+	# To where the piece is going: the piece leaves its square as the card lands.
+	_fx.fly_card(view, _view.board.get_global_transform() * _view.board.square_centre(play["to"]))
 	_take_from_hand(view)
 	_selected_card = -1
 	_selected_from = NO_SQUARE

@@ -98,9 +98,45 @@ func escape_prompt_scene() -> void:
 	await stage.wait_idle()
 
 
+## Deep Vision with two of the opponent's five cards still hidden (hidden_cards 3
+## − foresight 1): three faces and two backs; then a Scout from the hand turns
+## the two backs face up, shot while they flip open; then a still once the reveal
+## has settled ("all shown", the names line and the log).
+func deep_vision_scout_scene() -> void:
+	await _show_deep_vision_setup()
+	await stage.shot("match_deep_vision_hidden")
+	await _play_scout()
+	await stage.shot("match_deep_vision_scouted", 0.2)
+	await stage.wait_idle()
+	await stage.shot("match_deep_vision_scout_settled")
+
+
+func _show_deep_vision_setup() -> void:
+	var setup := crafted(
+		[["king", 2, 0], ["knight", 1, 2], ["pawn", 3, 1], ["rook", 0, 0], ["bishop", 4, 0]],
+		[["king", 2, 5], ["bishop", 2, 4], ["pawn", 4, 4], ["knight", 1, 5]],
+		["scout", "knight", "move", "rook", "pawn"], ["pawn", "knight", "move", "bishop", "rook"], ["foresight"])
+	setup["opponent"]["hidden_cards"] = 3
+	show_crafted(setup)
+	await stage.wait_idle()
+
+
+## Plays the Scout from the hand; returns once its reveal starts (reward_reveal).
+func _play_scout() -> void:
+	var screen := _screen()
+	var hand: Array[CardData] = screen.game.hand(ChessMatch.PLAYER)
+	for i in hand.size():
+		if hand[i].type == "scout":
+			var flip := stage.listen("reward_reveal")
+			screen.press_card(i)
+			await stage.heard(flip)
+			return
+
+
 # --- Motion frame sequences ----------------------------------------------------
 
-## 6-8 frames each across a capture, an explosion, a card play (energy drain) and a turn banner.
+## 6-11 frames each across a capture, an explosion, a card play (energy drain), a
+## turn banner, a Scout reveal (Deep Vision) and Deep Vision's attributed point.
 func motion_frames() -> void:
 	await _show_capture_setup()
 	await _select("knight", Vector2i(1, 2))
@@ -126,6 +162,26 @@ func motion_frames() -> void:
 	await stage.key(KEY_E)
 	await stage.heard(banner)
 	await stage.frames("turn_banner", 11, 0.09, frames_dir)
+	await stage.wait_idle()
+
+	# Deep Vision + Scout: the two hidden backs turn over one after the other.
+	await _show_deep_vision_setup()
+	await _play_scout()
+	await stage.frames("scout_reveal", 10, 0.06, frames_dir)
+	await stage.wait_idle()
+
+	# Deep Vision's cost: the opponent's rook takes a pawn, "+1" and "+1 Deep Vision"
+	# float apart and the player's Deep Vision chip glows.
+	show_crafted(crafted([["king", 2, 0], ["pawn", 3, 3]], [["king", 0, 5], ["rook", 3, 5]],
+		["move", "move", "move", "move", "move"], ["rook", "rook", "rook", "rook", "rook"], ["foresight"]))
+	await stage.wait_idle()
+	var scripted := ScriptedAI.new(ChessMatch.OPPONENT, 1, 0.0, RandomNumberGenerator.new())
+	scripted.rook_move = [Vector2i(3, 5), Vector2i(3, 3)]
+	_screen()._ai = scripted
+	var taken := stage.listen(MatchFx.capture_sound(ChessMatch.OPPONENT))
+	await stage.key(KEY_E)
+	await stage.heard(taken)
+	await stage.frames("deep_vision_point", 6, 0.1, frames_dir)
 	await stage.wait_idle()
 
 
@@ -176,6 +232,9 @@ static func _cards(specs: Array) -> Array[CardData]:
 
 func show_crafted(setup: Dictionary) -> void:
 	Game.match_setup = setup
+	# The HUD shows the run's artifacts: make them the crafted player's, so the HUD
+	# chips and the YOU panel agree (this throwaway run is the tool's own).
+	Game.run.artifacts.assign(setup["player"]["artifacts"])
 	stage.main.show_screen("MATCH")
 
 

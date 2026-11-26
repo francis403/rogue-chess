@@ -64,7 +64,11 @@ func shot(shot_name: String, settle: float = SETTLE) -> void:
 ## The next drawn frame of the stage.
 func grab() -> Image:
 	if not DisplayServer.window_can_draw():
-		# The engine skips drawing a hidden window; draw this frame by hand.
+		# The engine skips drawing a hidden window; draw this frame by hand. Wait
+		# for the next frame first: the deferred work of this one (container
+		# sorts, freeing the old screen, redraws) only runs at its end, and a
+		# draw forced before it shows a stale half-built screen.
+		await get_tree().process_frame
 		RenderingServer.force_draw(false)
 	else:
 		await RenderingServer.frame_post_draw

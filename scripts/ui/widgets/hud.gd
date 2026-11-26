@@ -76,12 +76,18 @@ func _vcenter(node: Control) -> Control:
 
 ## The training points changed by `delta`: the figure pops and flashes green
 ## (gain) or oxblood (spend) back to brass, with score_tick / energy_spend.
-## With reduced motion only the colour flash stays.
+## A spend also shows "−N pt" just under the figure (Feel.spend_float).
+## With reduced motion only the colour flash and the plate's fade stay.
 func bump_points(delta: int) -> void:
 	if delta == 0 or not is_instance_valid(_points_label) or not is_visible_in_tree():
 		return
 	Sfx.play("score_tick" if delta > 0 else "energy_spend")
 	Feel.pop(_points_label, 1.3)
+	if delta < 0:
+		# Next frame: the rebuilt bar has been laid out, so the figure's place is final.
+		var place := _float_spend.bind(-delta)
+		if not get_tree().process_frame.is_connected(place):
+			get_tree().process_frame.connect(place, CONNECT_ONE_SHOT)
 	if _bump_tween != null and _bump_tween.is_valid():
 		_bump_tween.kill()
 	_points_label.add_theme_color_override("font_color", Palette.FELT if delta > 0 else Palette.OXBLOOD_INK)
@@ -89,3 +95,8 @@ func bump_points(delta: int) -> void:
 	_bump_tween = label.create_tween()
 	_bump_tween.tween_interval(Motion.time("hud_bump") * 0.5)
 	_bump_tween.tween_callback(func() -> void: label.add_theme_color_override("font_color", Palette.BRASS))
+
+
+func _float_spend(spent: int) -> void:
+	if is_instance_valid(_points_label) and is_visible_in_tree():
+		Feel.spend_float(self, _points_label, spent)

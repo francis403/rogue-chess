@@ -33,6 +33,8 @@ var names: Array[String] = []
 var view: MatchView
 ## The screen's hand views (the same array; the screen refills it in place).
 var card_views: Array[CardView] = []
+## [player's artifact ids, opponent's]: names the artifact points in a capture.
+var artifacts: Array = []
 ## Squares of the pieces giving the last check (the screen marks them as threats).
 var last_checkers: Array[Vector2i] = []
 
@@ -65,6 +67,7 @@ func _init(match_view: MatchView, hand_views: Array[CardView]) -> void:
 	game = match_view.game
 	names = match_view.names
 	card_views = hand_views
+	artifacts = [game.artifacts(PLAYER), game.artifacts(OPPONENT)]
 
 
 func apply(events: Array[Dictionary]) -> void:
@@ -77,7 +80,8 @@ func apply(events: Array[Dictionary]) -> void:
 			await _close_blast()
 		if event["type"] == "turn_start":
 			_log_draws(draws)  # draws so far belong to the turn that is ending
-		view.log_line(EventText.describe(event, names), event["type"])
+		if event["type"] != "reveal":  # logged when its cards have turned
+			view.log_line(EventText.describe(event, names, artifacts), event["type"])
 		match event["type"]:
 			"draw":
 				if event["side"] == OPPONENT and draws[OPPONENT] == 0:
@@ -92,7 +96,7 @@ func apply(events: Array[Dictionary]) -> void:
 			"card_played":
 				await _on_card_played(event, events, index)
 			"reveal":
-				await _animate_reveal()
+				await _animate_reveal(event)
 			"discard":
 				await _animate_discard(event)
 			"check":
@@ -331,27 +335,40 @@ func _deal_opponent_hand() -> void:
 	Feel.reveal(view.opponent_hand.get_children(), Motion.seconds("deal_stagger"))
 
 
-## A Scout turns the next hidden cards face up: one after another, each opens
-## from edge-on and glows brass (with reduced motion they only fade in).
-func _animate_reveal() -> void:
-	var faces := view.sync_opponent_hand()
+## A Scout turns the next hidden cards over once its card has reached the row:
+## one after another, each back narrows to edge-on and opens as its face (a
+## paper flip each, a brass glow after), under one reveal chime. Only once the
+## last one has turned do the caption (with a pop), the names line and the log
+## tell the result, so no text gives it away early. With reduced motion they
+## only fade in.
+func _animate_reveal(event: Dictionary) -> void:
+	await wait(Motion.time("card_fly"))  # the Scout's ghost lands on the row first
+	var faces := view.sync_opponent_hand(true)
+	var revealed := " · ".join(faces.map(func(face: CardView) -> String: return face.card.display_name()))
 	Sfx.play("reward_reveal")
-	Feel.pop(view.opponent_hand.caption, 1.15, "pop")
 	var stagger := Motion.time("deal_stagger") * 2.0
 	for i in faces.size():
 		_flip_up(faces[i], stagger * i)
-	await wait(Motion.time("reveal") + stagger * faces.size())
+	await wait(Motion.time("reveal") + stagger * maxi(faces.size() - 1, 0))
+	view.opponent_hand.refresh_text()
+	Feel.pop(view.opponent_hand.caption, 1.15, "pop")
+	view.log_line(EventText.describe(event, names, artifacts), "reveal")
+	if revealed != "":
+		view.log_line("Revealed: %s" % revealed, "reveal")
 
 
+## Drawn by CardView.flip, not by `scale`: the row's layout resets a child's
+## scale when it sorts, which had cut the old scale flip short (faces popped in).
 func _flip_up(face: CardView, delay: float) -> void:
+	var tween := Motion.tween(face, "soft")
+	tween.tween_interval(delay)
+	tween.tween_callback(Sfx.play.bind("card_draw"))
 	if Motion.reduced():
 		face.modulate.a = 0.0
-		Motion.tween(face).tween_property(face, "modulate:a", 1.0, Motion.time("reveal")).set_delay(delay)
+		tween.tween_property(face, "modulate:a", 1.0, Motion.time("reveal"))
 		return
-	face.pivot_offset = CardView.MINI / 2.0
-	face.scale = Vector2(0.0, 1.0)
-	var tween := Motion.tween(face, "settle")
-	tween.tween_property(face, "scale:x", 1.0, Motion.time("reveal")).set_delay(delay)
+	face.flip = 0.0
+	tween.tween_property(face, "flip", 1.0, Motion.time("reveal"))
 	tween.tween_callback(Feel.glow.bind(face))
 
 
@@ -428,6 +445,9 @@ func _show_turn_banner(side: int) -> void:
 	_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_banner.z_index = 28
 	_banner.add_child(panel)
+	# However the banner goes (its tween ends, a newer banner replaces it, or the
+	# screen exits mid-wipe), the header's turn label never stays hidden.
+	_banner.tree_exiting.connect(_on_banner_exiting.bind(_banner))
 	view.fx_layer.add_child(_banner)
 	# It covers the whole strip (turn label and score race) while it is up.
 	var strip := view.header.get_global_rect()
@@ -445,10 +465,26 @@ func _show_turn_banner(side: int) -> void:
 	if Motion.reduced():
 		tween.tween_interval(total)
 	else:
+		# The header's new turn label waits under the wipe: it shows only once the
+		# banner covers it, never beside the half-open banner (critique 4).
+		_show_turn_label(false)
 		tween.tween_property(_banner, "size:x", panel.size.x, Motion.time("banner_in"))
+		tween.tween_callback(_show_turn_label.bind(true))
 		tween.tween_interval(Motion.time("banner_hold"))
 		tween.tween_property(_banner, "size:x", 0.0, Motion.time("banner_out")).set_ease(Tween.EASE_IN)
 	tween.tween_callback(_banner.queue_free)
+
+
+## A replaced banner leaves the label to its successor (hidden under the new wipe).
+func _on_banner_exiting(banner: Control) -> void:
+	if banner == _banner or not is_instance_valid(_banner):
+		_show_turn_label(true)
+
+
+func _show_turn_label(is_shown: bool) -> void:
+	for label: Variant in [view.turn_label, view.turn_caption]:
+		if is_instance_valid(label):
+			(label as Label).modulate.a = 1.0 if is_shown else 0.0
 
 
 ## Seconds until the turn banner has gone (0 when none is up).
@@ -625,8 +661,8 @@ func _animate_capture(event: Dictionary) -> void:
 	if is_instance_valid(victim):
 		_knock_away(victim, direction)
 	_burst(FxBurst.Kind.SHARDS, at, MatchView.side_color(event["side"]), view.board.cell() * 1.1, Motion.time("burst"))
-	if event["points"] > 0:
-		var args := ["+%d" % event["points"], event["square"], MatchView.side_color(event["by_side"]), SCORE_FLOAT_SIZE]
+	_flash_bonuses(event)
+	for args in _score_floats(event, "+%d"):
 		if _is_blast_open:
 			_blast_floats.append(args)  # after "Boom!", which gets the best spot
 		else:
@@ -636,6 +672,30 @@ func _animate_capture(event: Dictionary) -> void:
 	if event["points"] >= HEAVY_CAPTURE_POINTS:
 		Feel.shake(view.board, 0.3, direction)
 	await wait(Motion.time("capture_beat"))
+
+
+## The float texts of a capture's points ([text, square, color, size] each):
+## `base_format` with the piece's own points (none for 0), then a smaller "+1 Deep Vision"
+## per artifact point inside them. No side effects (_flash_bonuses flashes the chips).
+func _score_floats(event: Dictionary, base_format: String) -> Array[Array]:
+	var parts := EventText.bonuses(event, artifacts)
+	var base: int = event["points"]
+	var floats: Array[Array] = []
+	for part in parts:
+		base -= int(part["points"])
+	var color := MatchView.side_color(event["by_side"])
+	if base > 0 or event["type"] == "burn_out":  # a burn-out always says so
+		floats.append([base_format % base, event["square"], color, SCORE_FLOAT_SIZE])
+	for part in parts:
+		floats.append(["+%d %s" % [part["points"], Ui.artifact_name(part["id"])], event["square"], color, SMALL_FLOAT_SIZE])
+	return floats
+
+
+## Flashes the chip of each artifact that added points to a capture, in its owner's panel.
+func _flash_bonuses(event: Dictionary) -> void:
+	for part in EventText.bonuses(event, artifacts):
+		var owner: int = event["by_side"] if part["id"] == "capture_bonus" else PLAYER
+		view.flash_artifact(owner, part["id"])
 
 
 ## The opponent's captures sound darker than the player's (when that sound exists).
@@ -768,7 +828,11 @@ func _animate_burn_out(event: Dictionary) -> void:
 		tween.tween_property(victim, "modulate", Color(0.2, 0.1, 0.05, 0.0), Motion.time("burnout"))
 		tween.tween_callback(victim.queue_free)
 	_burst(FxBurst.Kind.SMOKE, at, Palette.IVORY_FAINT, view.board.cell() * 0.7, Motion.time("burnout") * 2.0)
-	_float("Burned out +%d" % event["points"], event["square"], Palette.EMBER, SMALL_FLOAT_SIZE)
+	_flash_bonuses(event)
+	for args in _score_floats(event, "Burned out +%d"):
+		args[2] = Palette.EMBER
+		args[3] = SMALL_FLOAT_SIZE
+		_float.callv(args)
 	await wait(Motion.time("burnout") * 0.75)
 
 
@@ -799,25 +863,27 @@ func _swap_to_promoted(token: PieceToken, piece_type: String) -> void:
 	token.queue_redraw()
 
 
-## The played card leaves the hand toward `target` (a global point: the piece it
-## moves, or the opponent's hand for a Scout), shrinking and fading; it fades in
-## place with reduced motion.
+## The played card leaves the hand toward `target` (a global point: the square
+## its piece moves to, or the opponent's hand for a Scout), shrinking and fading; it fades in
+## place with reduced motion. It flies as the board's first child, so it draws
+## over the squares but under every piece token (it never hides a piece on its way).
 func fly_card(card: CardView, target_point: Vector2) -> void:
 	var ghost := CardView.create(card.card, card.size)
 	ghost.is_interactive = false
 	ghost.is_selected = card.is_selected
-	view.fx_layer.add_child(ghost)
+	view.board.add_child(ghost)
+	view.board.move_child(ghost, 0)
 	_ghosts.append(ghost)
 	ghost.size = card.size
 	ghost.pivot_offset = card.size / 2.0  # it shrinks around its centre
-	var to_layer := view.fx_layer.get_global_transform().affine_inverse()
+	var to_layer := view.board.get_global_transform().affine_inverse()
 	ghost.position = to_layer * card.global_position
 	var duration := Motion.time("card_fly")
 	var tween := Motion.tween(ghost).set_parallel()
 	if not Motion.reduced():
 		var target := to_layer * target_point - card.size / 2.0
 		# It rises out of the hand first, then glides across; it shrinks early and
-		# arrives before it has faded, so it settles on the piece, inside its square.
+		# arrives before it has faded, so it settles inside the destination square.
 		tween.tween_property(ghost, "position:y", target.y, duration * 0.7).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 		tween.tween_property(ghost, "position:x", target.x, duration * 0.7).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 		tween.tween_property(ghost, "scale", Vector2.ONE * FLY_SCALE, duration * 0.4)

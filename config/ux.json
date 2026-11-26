@@ -86,6 +86,7 @@
 			"chosen_pause": 0.22,
 			"taken_pause": 0.3,
 			"unlock_delay": 0.2,
+			"unlock_hold": 0.9,
 			"title_drop": 0.32,
 			"title_drop_stagger": 0.035,
 			"title_drop_delay": 0.05,

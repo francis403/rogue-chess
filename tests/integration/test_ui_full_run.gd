@@ -198,7 +198,7 @@ func _coaching_accept_and_leave() -> void:
 
 ## Index of the coaching offer whose Accept button this is (offers are built in order).
 func _offer_index_of(accept: Button) -> int:
-	var all := ui.find_all(ui.screen(), Button).filter(func(node: Button) -> bool: return node.text.begins_with("Accept") or node.text.contains("can't afford"))
+	var all := ui.find_all(ui.screen(), Button).filter(func(node: Button) -> bool: return node.text.begins_with("Accept") or node.text.begins_with("Need"))
 	return all.find(accept)
 
 
